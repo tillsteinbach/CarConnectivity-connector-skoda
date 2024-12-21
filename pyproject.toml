@@ -14,6 +14,7 @@ authors = [
     { name = "Till Steinbach" }
 ]
 dependencies = [
+    "carconnectivity"
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -31,7 +32,11 @@ classifiers = [
 
 [project.urls]
 
-[project.scripts]
-allcars = "allCars:main"
-
 [tool.setuptools_scm]
+
+[tool.pylint.format]
+max-line-length = 160
+ignore-patterns= "_version.py"
+
+[tool.bandit]
+targets = "carconnectivity_cli"

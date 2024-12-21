@@ -52,16 +52,16 @@ class Connector(BaseConnector):
                 netrc_filename = os.path.join(os.path.expanduser("~"), ".netrc")
             try:
                 secrets = netrc.netrc(file=netrc_filename)
-                secret: tuple[str, str, str] | None = secrets.authenticators("skoda.de")
+                secret: tuple[str, str, str] | None = secrets.authenticators("skoda")
                 if secret is None:
-                    raise AuthenticationError(f'Authentication using {netrc_filename} failed: skoda.de not found in netrc')
+                    raise AuthenticationError(f'Authentication using {netrc_filename} failed: skoda not found in netrc')
                 username, _, password = secret
             except netrc.NetrcParseError as err:
                 LOG.error('Authentification using %s failed: %s', netrc_filename, err)
                 raise AuthenticationError(f'Authentication using {netrc_filename} failed: {err}') from err
             except TypeError as err:
                 if 'username' not in self.config:
-                    raise AuthenticationError(f'skoda.de entry was not found in {netrc_filename} netrc-file.'
+                    raise AuthenticationError(f'skoda entry was not found in {netrc_filename} netrc-file.'
                                               ' Create it or provide username and password in config') from err
             except FileNotFoundError as err:
                 raise AuthenticationError(f'{netrc_filename} netrc-file was not found. Create it or provide username and password in config') from err

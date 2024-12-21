@@ -130,9 +130,11 @@ class Connector(BaseConnector):
         if data is not None:
             if 'vehicles' in data and data['vehicles'] is not None:
                 for vehicle_dict in data['vehicles']:
-                    if 'vin' in vehicle_dict and vehicle_dict['vin'] is not None and not garage.get_vehicle(vehicle_dict['vin']):
-                        vehicle: GenericVehicle = ElectricVehicle(vin=vehicle_dict['vin'], garage=garage)
-                        garage.add_vehicle(vehicle_dict['vin'], vehicle)
+                    if 'vin' in vehicle_dict and vehicle_dict['vin'] is not None:
+                        vehicle: Optional[GenericVehicle] = garage.get_vehicle(vehicle_dict['vin'])
+                        if not vehicle:
+                            vehicle = ElectricVehicle(vin=vehicle_dict['vin'], garage=garage)
+                            garage.add_vehicle(vehicle_dict['vin'], vehicle)
 
                         if 'licensePlate' in vehicle_dict and vehicle_dict['licensePlate'] is not None:
                             vehicle.license_plate._set_value(vehicle_dict['licensePlate'])  # pylint: disable=protected-access

@@ -8,13 +8,16 @@ import netrc
 from datetime import datetime, timedelta
 import requests
 
-from carconnectivity.vehicle import GenericVehicle, ElectricVehicle
+from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.garage import Garage
 from carconnectivity.errors import AuthenticationError, APIError, TooManyRequestsError, RetrievalError
-from carconnectivity.util import robust_time_parse
+from carconnectivity.util import robust_time_parse, log_extra_keys
 from carconnectivity.units import Length
+from carconnectivity.doors import Doors
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
+from carconnectivity_connectors.skoda.vehicle import SkodaElectricVehicle
+from carconnectivity_connectors.skoda.capability import Capability
 
 
 if TYPE_CHECKING:
@@ -25,6 +28,7 @@ if TYPE_CHECKING:
     from carconnectivity.carconnectivity import CarConnectivity
 
 LOG: logging.Logger = logging.getLogger("carconnectivity-connector-skoda")
+LOG_API_DEBUG: logging.Logger = logging.getLogger("carconnectivity-connector-skoda-api-debug")
 
 
 class Connector(BaseConnector):
@@ -126,20 +130,47 @@ class Connector(BaseConnector):
         garage: Garage = self.car_connectivity.garage
         url = 'https://api.connect.skoda-auto.cz/api/v4/garage'
         data: Dict[str, Any] | None = self._fetch_data(url, session=self._session)
-
+        print(data)
+        seen_vehicle_vins: set[str] = set()
         if data is not None:
             if 'vehicles' in data and data['vehicles'] is not None:
                 for vehicle_dict in data['vehicles']:
                     if 'vin' in vehicle_dict and vehicle_dict['vin'] is not None:
-                        vehicle: Optional[GenericVehicle] = garage.get_vehicle(vehicle_dict['vin'])
+                        seen_vehicle_vins.add(vehicle_dict['vin'])
+                        vehicle: Optional[SkodaElectricVehicle] = garage.get_vehicle(vehicle_dict['vin'])  # pyright: ignore[reportAssignmentType]
                         if not vehicle:
-                            vehicle = ElectricVehicle(vin=vehicle_dict['vin'], garage=garage)
+                            vehicle = SkodaElectricVehicle(vin=vehicle_dict['vin'], garage=garage)
                             garage.add_vehicle(vehicle_dict['vin'], vehicle)
 
                         if 'licensePlate' in vehicle_dict and vehicle_dict['licensePlate'] is not None:
                             vehicle.license_plate._set_value(vehicle_dict['licensePlate'])  # pylint: disable=protected-access
 
+                        if 'capabilities' in vehicle_dict and vehicle_dict['capabilities'] is not None:
+                            if 'capabilities' in vehicle_dict['capabilities'] and vehicle_dict['capabilities']['capabilities'] is not None:
+                                found_capabilities = set()
+                                for capability_dict in vehicle_dict['capabilities']['capabilities']:
+                                    if 'id' in capability_dict and capability_dict['id'] is not None:
+                                        capability_id = capability_dict['id']
+                                        found_capabilities.add(capability_id)
+                                        if capability_id in vehicle.capabilities:
+                                            capability: Capability = vehicle.capabilities[capability_id]
+                                        else:
+                                            capability = Capability(capability_id=capability_id, vehicle=vehicle)
+                                            vehicle.capabilities[capability_id] = capability
+                                for capability_id in vehicle.capabilities.keys() - found_capabilities:
+                                    vehicle.capabilities[capability_id].enabled = False
+                                    vehicle.capabilities.pop(capability_id)
+
+                        if 'specification' in vehicle_dict and vehicle_dict['specification'] is not None:
+                            if 'model' in vehicle_dict['specification'] and vehicle_dict['specification']['model'] is not None:
+                                vehicle.model._set_value(vehicle_dict['specification']['model'])  # pylint: disable=protected-access
+                            log_extra_keys(LOG_API_DEBUG, 'specification', vehicle_dict['specification'],  {'model'})
+                        log_extra_keys(LOG_API_DEBUG, 'vehicles', vehicle_dict,  {'vin', 'licensePlate', 'capabilities', 'specification'})
                         self.fetch_vehicle_status(vehicle)
+        for vin in set(garage.list_vehicle_vins()) - seen_vehicle_vins:
+            vehicle_to_remove = garage.get_vehicle(vin)
+            if vehicle_to_remove is not None and vehicle_to_remove.is_managed_by_connector(self):
+                garage.remove_vehicle(vin)
 
     def fetch_vehicle_status(self, vehicle: GenericVehicle) -> None:
         """
@@ -158,11 +189,58 @@ class Connector(BaseConnector):
             remote = data['remote']
             if 'capturedAt' in remote and remote['capturedAt'] is not None:
                 captured_at: datetime = robust_time_parse(remote['capturedAt'])
-
-                if 'mileageInKm' in remote and remote['mileageInKm'] is not None:
-                    vehicle.odometer._set_value(value=remote['mileageInKm'], measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
             else:
                 raise APIError('Could not fetch vehicle status, capturedAt missing')
+            if 'mileageInKm' in remote and remote['mileageInKm'] is not None:
+                vehicle.odometer._set_value(value=remote['mileageInKm'], measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+            if 'status' in remote and remote['status'] is not None:
+                if 'open' in remote['status'] and remote['status']['open'] is not None:
+                    if remote['status']['open'] == 'YES':
+                        vehicle.doors.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
+                    elif remote['status']['open'] == 'NO':
+                        vehicle.doors.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        vehicle.doors.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                        LOG_API_DEBUG.info('Unknown door open state: %s', remote['status']['open'])
+                if 'locked' in remote['status'] and remote['status']['locked'] is not None:
+                    if remote['status']['locked'] == 'YES':
+                        vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
+                    elif remote['status']['locked'] == 'NO':
+                        vehicle.doors.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        vehicle.doors.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                        LOG_API_DEBUG.info('Unknown door lock state: %s', remote['status']['locked'])
+            if 'doors' in remote and remote['doors'] is not None:
+                seen_door_ids: set[str] = set()
+                for door_status in remote['doors']:
+                    door_id = door_status['name']
+                    seen_door_ids.add(door_id)
+                    if door_id in vehicle.doors.doors:
+                        door: Doors.Door = vehicle.doors.doors[door_id]
+                    else:
+                        door = Doors.Door(door_id=door_id, doors=vehicle.doors)
+                        vehicle.doors.doors[door_id] = door
+                    if 'status' in door_status and door_status['status'] is not None:
+                        if door_status['status'] == 'OPEN':
+                            door.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
+                            door.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
+                        elif door_status['status'] == 'CLOSED':
+                            door.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                            door.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
+                        elif door_status['status'] == 'LOCKED':
+                            door.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
+                            door.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
+                        elif door_status['status'] == 'UNSUPPORTED':
+                            door.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                            door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            door.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                            door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+
+                    log_extra_keys(LOG_API_DEBUG, 'doors', door_status, {'name', 'status'})
+
+                log_extra_keys(LOG_API_DEBUG, 'status', remote['status'],  {'open', 'locked'})
+            log_extra_keys(LOG_API_DEBUG, 'vehicles', remote,  {'capturedAt', 'mileageInKm', 'status', 'doors'})
         else:
             raise APIError('Could not fetch vehicle status')
         print(data)

@@ -33,6 +33,7 @@ classifiers = [
 [project.urls]
 
 [tool.setuptools_scm]
+write_to = "src/carconnectivity_connectors/skoda/_version.py"
 
 [tool.pylint.format]
 max-line-length = 160

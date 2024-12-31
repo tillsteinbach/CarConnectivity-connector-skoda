@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import threading
 import os
 import logging
 import netrc
@@ -21,7 +22,7 @@ from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
 from carconnectivity_connectors.skoda.vehicle import SkodaElectricVehicle
 from carconnectivity_connectors.skoda.capability import Capability
-
+from carconnectivity_connectors.skoda._version import __version__
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any
@@ -46,6 +47,9 @@ class Connector(BaseConnector):
     def __init__(self, car_connectivity: CarConnectivity, config: Dict) -> None:
         BaseConnector.__init__(self, car_connectivity, config)
         LOG.info("Loading skoda connector with config %s", self.config)
+
+        self._background_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
 
         username: Optional[str] = None
         password: Optional[str] = None
@@ -73,9 +77,15 @@ class Connector(BaseConnector):
             except FileNotFoundError as err:
                 raise AuthenticationError(f'{netrc_filename} netrc-file was not found. Create it or provide username and password in config') from err
 
-        self.max_age: Optional[int] = 300
-        if 'maxAge' in self.config:
-            self.max_age = self.config['maxAge']
+        self.max_age: int = 300
+        if 'max_age' in self.config:
+            self.max_age = self.config['max_age']
+
+        self.intervall: int = 300
+        if 'interval' in self.config:
+            self.intervall = self.config['interval']
+            if self.intervall < 180:
+                raise ValueError('Intervall must be at least 180 seconds')
 
         if username is None or password is None:
             raise AuthenticationError('Username or password not provided')
@@ -86,6 +96,16 @@ class Connector(BaseConnector):
 
         self._elapsed: List[timedelta] = []
 
+    def startup(self) -> None:
+        self._background_thread = threading.Thread(target=self._background_loop, daemon=True)
+        self._background_thread.start()
+
+    def _background_loop(self) -> None:
+        self._stop_event.clear()
+        while not self._stop_event.is_set():
+            self.fetch_all()
+            self._stop_event.wait(self.intervall)
+
     def persist(self) -> None:
         """
         Persists the current state using the manager's persist method.
@@ -93,6 +113,7 @@ class Connector(BaseConnector):
         This method calls the `persist` method of the `_manager` attribute to save the current state.
         """
         self._manager.persist()
+        return
 
     def shutdown(self) -> None:
         """
@@ -104,14 +125,14 @@ class Connector(BaseConnector):
         2. Closes the session.
         3. Sets the session and manager to None.
         4. Calls the shutdown method of the base connector.
-
-        Returns:
-            None
         """
+        self._stop_event.set()
+        if self._background_thread is not None:
+            self._background_thread.join()
         self.persist()
         self._session.close()
         self._session2.close()
-        BaseConnector.shutdown(self)
+        return super().shutdown()
 
     def fetch_all(self) -> None:
         """
@@ -157,20 +178,19 @@ class Connector(BaseConnector):
                                     if 'id' in capability_dict and capability_dict['id'] is not None:
                                         capability_id = capability_dict['id']
                                         found_capabilities.add(capability_id)
-                                        if capability_id in vehicle.capabilities:
-                                            capability: Capability = vehicle.capabilities[capability_id]
+                                        if vehicle.capabilities.has_capability(capability_id):
+                                            capability: Capability = vehicle.capabilities.get_capability(capability_id)  # pyright: ignore[reportAssignmentType]
                                         else:
-                                            capability = Capability(capability_id=capability_id, vehicle=vehicle)
-                                            vehicle.capabilities[capability_id] = capability
+                                            capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities)
+                                            vehicle.capabilities.add_capability(capability_id, capability)
                                     else:
                                         raise APIError('Could not parse capability, id missing')
-                                for capability_id in vehicle.capabilities.keys() - found_capabilities:
-                                    vehicle.capabilities[capability_id].enabled = False
-                                    vehicle.capabilities.pop(capability_id)
+                                for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
+                                    vehicle.capabilities.remove_capability(capability_id)
                             else:
-                                vehicle.capabilities = {}
+                                vehicle.capabilities.clear_capabilities()
                         else:
-                            vehicle.capabilities = {}
+                            vehicle.capabilities.clear_capabilities()
 
                         if 'specification' in vehicle_dict and vehicle_dict['specification'] is not None:
                             if 'model' in vehicle_dict['specification'] and vehicle_dict['specification']['model'] is not None:
@@ -363,8 +383,6 @@ class Connector(BaseConnector):
                     vehicle.lights.lights = {}
                 log_extra_keys(LOG_API_DEBUG, 'lights', remote['lights'], {'overallStatus', 'lightsStatus'})
             log_extra_keys(LOG_API_DEBUG, 'vehicles', remote,  {'capturedAt', 'mileageInKm', 'status', 'doors', 'windows', 'lights'})
-        else:
-            raise APIError('Could not fetch vehicle status')
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
@@ -420,3 +438,6 @@ class Connector(BaseConnector):
                 else:
                     raise RetrievalError from json_error
         return data
+
+    def get_version(self) -> str:
+        return __version__

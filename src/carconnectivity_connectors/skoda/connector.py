@@ -72,20 +72,19 @@ class Connector(BaseConnector):
                 raise AuthenticationError(f'Authentication using {netrc_filename} failed: {err}') from err
             except TypeError as err:
                 if 'username' not in self.config:
-                    raise AuthenticationError(f'skoda entry was not found in {netrc_filename} netrc-file.'
+                    raise AuthenticationError(f'"skoda" entry was not found in {netrc_filename} netrc-file.'
                                               ' Create it or provide username and password in config') from err
             except FileNotFoundError as err:
                 raise AuthenticationError(f'{netrc_filename} netrc-file was not found. Create it or provide username and password in config') from err
 
-        self.max_age: int = 300
-        if 'max_age' in self.config:
-            self.max_age = self.config['max_age']
-
         self.intervall: int = 300
         if 'interval' in self.config:
             self.intervall = self.config['interval']
-            if self.intervall < 180:
-                raise ValueError('Intervall must be at least 180 seconds')
+            if self.intervall < 300:
+                raise ValueError('Intervall must be at least 300 seconds')
+        self.max_age: int = self.intervall - 1
+        if 'max_age' in self.config:
+            self.max_age = self.config['max_age']
 
         if username is None or password is None:
             raise AuthenticationError('Username or password not provided')
@@ -170,6 +169,11 @@ class Connector(BaseConnector):
                             vehicle.license_plate._set_value(vehicle_dict['licensePlate'])  # pylint: disable=protected-access
                         else:
                             vehicle.license_plate._set_value(None)  # pylint: disable=protected-access
+                        
+                        if 'softwareVersion' in vehicle_dict and vehicle_dict['softwareVersion'] is not None:
+                            vehicle.software.version._set_value(vehicle_dict['softwareVersion'])  # pylint: disable=protected-access
+                        else:
+                            vehicle.software.version._set_value(None)  # pylint: disable=protected-access
 
                         if 'capabilities' in vehicle_dict and vehicle_dict['capabilities'] is not None:
                             if 'capabilities' in vehicle_dict['capabilities'] and vehicle_dict['capabilities']['capabilities'] is not None:
@@ -222,6 +226,7 @@ class Connector(BaseConnector):
         vin = vehicle.vin.value
         url = f'https://api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}'
         data: Dict[str, Any] | None = self._fetch_data(url, self._session2)
+        print(data)
         if data is not None and 'remote' in data and data['remote'] is not None:
             remote = data['remote']
             if 'capturedAt' in remote and remote['capturedAt'] is not None:

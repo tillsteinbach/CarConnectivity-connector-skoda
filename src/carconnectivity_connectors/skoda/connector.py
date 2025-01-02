@@ -9,18 +9,20 @@ import netrc
 from datetime import datetime, timedelta
 import requests
 
-from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.garage import Garage
-from carconnectivity.errors import AuthenticationError, APIError, TooManyRequestsError, RetrievalError
-from carconnectivity.util import robust_time_parse, log_extra_keys
+from carconnectivity.vehicle import GenericVehicle
+from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
+    TemporaryAuthenticationError, ConfigurationError
+from carconnectivity.util import robust_time_parse, log_extra_keys, config_remove_credentials
 from carconnectivity.units import Length
 from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
+from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
-from carconnectivity_connectors.skoda.vehicle import SkodaElectricVehicle
+from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle
 from carconnectivity_connectors.skoda.capability import Capability
 from carconnectivity_connectors.skoda._version import __version__
 
@@ -31,8 +33,8 @@ if TYPE_CHECKING:
 
     from carconnectivity.carconnectivity import CarConnectivity
 
-LOG: logging.Logger = logging.getLogger("carconnectivity-connector-skoda")
-LOG_API_DEBUG: logging.Logger = logging.getLogger("carconnectivity-connector-skoda-api-debug")
+LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda")
+LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda-api-debug")
 
 
 class Connector(BaseConnector):
@@ -46,10 +48,27 @@ class Connector(BaseConnector):
     """
     def __init__(self, car_connectivity: CarConnectivity, config: Dict) -> None:
         BaseConnector.__init__(self, car_connectivity, config)
-        LOG.info("Loading skoda connector with config %s", self.config)
 
         self._background_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+
+        # Configure logging
+        if 'log_level' in config and config['log_level'] is not None:
+            config['log_level'] = config['log_level'].upper()
+            if config['log_level'] in logging.getLevelNamesMapping():
+                LOG.setLevel(config['log_level'])
+                logging.getLogger('requests').setLevel(config['log_level'])
+                logging.getLogger('urllib3').setLevel(config['log_level'])
+                logging.getLogger('oauthlib').setLevel(config['log_level'])
+            else:
+                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging.getLevelNamesMapping().keys())}')
+        if 'api_log_level' in config and config['api_log_level'] is not None:
+            config['api_log_level'] = config['api_log_level'].upper()
+            if config['api_log_level'] in logging.getLevelNamesMapping():
+                LOG_API.setLevel(config['api_log_level'])
+            else:
+                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging.getLevelNamesMapping().keys())}')
+        LOG.info("Loading skoda connector with config %s", config_remove_credentials(self.config))
 
         username: Optional[str] = None
         password: Optional[str] = None
@@ -77,12 +96,12 @@ class Connector(BaseConnector):
             except FileNotFoundError as err:
                 raise AuthenticationError(f'{netrc_filename} netrc-file was not found. Create it or provide username and password in config') from err
 
-        self.intervall: int = 300
+        self.interval: int = 300
         if 'interval' in self.config:
-            self.intervall = self.config['interval']
-            if self.intervall < 300:
+            self.interval = self.config['interval']
+            if self.interval < 300:
                 raise ValueError('Intervall must be at least 300 seconds')
-        self.max_age: int = self.intervall - 1
+        self.max_age: int = self.interval - 1
         if 'max_age' in self.config:
             self.max_age = self.config['max_age']
 
@@ -91,19 +110,32 @@ class Connector(BaseConnector):
 
         self._manager: SessionManager = SessionManager(tokenstore=car_connectivity.get_tokenstore(), cache=car_connectivity.get_cache())
         self._session: Session = self._manager.get_session(Service.MY_SKODA, SessionUser(username=username, password=password))
-        self._session2: Session = self._manager.get_session(Service.MY_SKODA2, SessionUser(username=username, password=password))
 
         self._elapsed: List[timedelta] = []
 
     def startup(self) -> None:
-        self._background_thread = threading.Thread(target=self._background_loop, daemon=True)
+        self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
         self._background_thread.start()
 
     def _background_loop(self) -> None:
         self._stop_event.clear()
         while not self._stop_event.is_set():
-            self.fetch_all()
-            self._stop_event.wait(self.intervall)
+            try:
+                self.fetch_all()
+            except TooManyRequestsError:
+                LOG.error('Retrieval error during update. Too many requests from your account. Will try again after 15 minutes')
+                self._stop_event.wait(900)
+            except RetrievalError:
+                LOG.error('Retrieval error during update. Will try again after configured interval of %ss', self.interval)
+                self._stop_event.wait(self.interval)
+            except APICompatibilityError:
+                LOG.error('API compatability error during update. Will try again after configured interval of %ss', self.interval)
+                self._stop_event.wait(self.interval)
+            except TemporaryAuthenticationError:
+                LOG.error('Temporary authentification error during update. Will try again after configured interval of %ss', self.interval)
+                self._stop_event.wait(self.interval)
+            else:
+                self._stop_event.wait(self.interval)
 
     def persist(self) -> None:
         """
@@ -125,12 +157,16 @@ class Connector(BaseConnector):
         3. Sets the session and manager to None.
         4. Calls the shutdown method of the base connector.
         """
+        # Disable and remove all vehicles managed soley by this connector
+        for vehicle in self.car_connectivity.garage.list_vehicles():
+            if len(vehicle.managing_connectors) == 1 and self in vehicle.managing_connectors:
+                self.car_connectivity.garage.remove_vehicle(vehicle.id)
+                vehicle.enabled = False
         self._stop_event.set()
         if self._background_thread is not None:
             self._background_thread.join()
         self.persist()
         self._session.close()
-        self._session2.close()
         return super().shutdown()
 
     def fetch_all(self) -> None:
@@ -151,7 +187,7 @@ class Connector(BaseConnector):
             None
         """
         garage: Garage = self.car_connectivity.garage
-        url = 'https://api.connect.skoda-auto.cz/api/v4/garage'
+        url = 'https://mysmob.api.connect.skoda-auto.cz/api/v2/garage'
         data: Dict[str, Any] | None = self._fetch_data(url, session=self._session)
         print(data)
         seen_vehicle_vins: set[str] = set()
@@ -160,51 +196,17 @@ class Connector(BaseConnector):
                 for vehicle_dict in data['vehicles']:
                     if 'vin' in vehicle_dict and vehicle_dict['vin'] is not None:
                         seen_vehicle_vins.add(vehicle_dict['vin'])
-                        vehicle: Optional[SkodaElectricVehicle] = garage.get_vehicle(vehicle_dict['vin'])  # pyright: ignore[reportAssignmentType]
+                        vehicle: Optional[SkodaVehicle] = garage.get_vehicle(vehicle_dict['vin'])  # pyright: ignore[reportAssignmentType]
                         if not vehicle:
-                            vehicle = SkodaElectricVehicle(vin=vehicle_dict['vin'], garage=garage)
+                            vehicle = SkodaVehicle(vin=vehicle_dict['vin'], garage=garage)
                             garage.add_vehicle(vehicle_dict['vin'], vehicle)
 
                         if 'licensePlate' in vehicle_dict and vehicle_dict['licensePlate'] is not None:
                             vehicle.license_plate._set_value(vehicle_dict['licensePlate'])  # pylint: disable=protected-access
                         else:
                             vehicle.license_plate._set_value(None)  # pylint: disable=protected-access
-                        
-                        if 'softwareVersion' in vehicle_dict and vehicle_dict['softwareVersion'] is not None:
-                            vehicle.software.version._set_value(vehicle_dict['softwareVersion'])  # pylint: disable=protected-access
-                        else:
-                            vehicle.software.version._set_value(None)  # pylint: disable=protected-access
 
-                        if 'capabilities' in vehicle_dict and vehicle_dict['capabilities'] is not None:
-                            if 'capabilities' in vehicle_dict['capabilities'] and vehicle_dict['capabilities']['capabilities'] is not None:
-                                found_capabilities = set()
-                                for capability_dict in vehicle_dict['capabilities']['capabilities']:
-                                    if 'id' in capability_dict and capability_dict['id'] is not None:
-                                        capability_id = capability_dict['id']
-                                        found_capabilities.add(capability_id)
-                                        if vehicle.capabilities.has_capability(capability_id):
-                                            capability: Capability = vehicle.capabilities.get_capability(capability_id)  # pyright: ignore[reportAssignmentType]
-                                        else:
-                                            capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities)
-                                            vehicle.capabilities.add_capability(capability_id, capability)
-                                    else:
-                                        raise APIError('Could not parse capability, id missing')
-                                for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
-                                    vehicle.capabilities.remove_capability(capability_id)
-                            else:
-                                vehicle.capabilities.clear_capabilities()
-                        else:
-                            vehicle.capabilities.clear_capabilities()
-
-                        if 'specification' in vehicle_dict and vehicle_dict['specification'] is not None:
-                            if 'model' in vehicle_dict['specification'] and vehicle_dict['specification']['model'] is not None:
-                                vehicle.model._set_value(vehicle_dict['specification']['model'])  # pylint: disable=protected-access
-                            else:
-                                vehicle.model._set_value(None)  # pylint: disable=protected-access
-                            log_extra_keys(LOG_API_DEBUG, 'specification', vehicle_dict['specification'],  {'model'})
-                        else:
-                            vehicle.model._set_value(None)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API_DEBUG, 'vehicles', vehicle_dict,  {'vin', 'licensePlate', 'capabilities', 'specification'})
+                        log_extra_keys(LOG_API, 'vehicles', vehicle_dict,  {'vin', 'licensePlate'})
                         self.fetch_vehicle_status(vehicle)
                     else:
                         raise APIError('Could not parse vehicle, vin missing')
@@ -213,7 +215,7 @@ class Connector(BaseConnector):
             if vehicle_to_remove is not None and vehicle_to_remove.is_managed_by_connector(self):
                 garage.remove_vehicle(vin)
 
-    def fetch_vehicle_status(self, vehicle: GenericVehicle) -> None:
+    def fetch_vehicle_status(self, vehicle: SkodaVehicle) -> None:
         """
         Fetches the status of a vehicle from the Skoda API.
 
@@ -224,46 +226,171 @@ class Connector(BaseConnector):
             None
         """
         vin = vehicle.vin.value
+        if vin is None:
+            raise APIError('VIN is missing')
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/garage/vehicles/{vin}?' \
+            'connectivityGenerations=MOD1&connectivityGenerations=MOD2&connectivityGenerations=MOD3&connectivityGenerations=MOD4'
+        vehicle_data: Dict[str, Any] | None = self._fetch_data(url, self._session)
+        print(vehicle_data)
+        if vehicle_data:
+            if 'softwareVersion' in vehicle_data and vehicle_data['softwareVersion'] is not None:
+                vehicle.software.version._set_value(vehicle_data['softwareVersion'])  # pylint: disable=protected-access
+            else:
+                vehicle.software.version._set_value(None)  # pylint: disable=protected-access
+            if 'capabilities' in vehicle_data and vehicle_data['capabilities'] is not None:
+                if 'capabilities' in vehicle_data['capabilities'] and vehicle_data['capabilities']['capabilities'] is not None:
+                    found_capabilities = set()
+                    for capability_dict in vehicle_data['capabilities']['capabilities']:
+                        if 'id' in capability_dict and capability_dict['id'] is not None:
+                            capability_id = capability_dict['id']
+                            found_capabilities.add(capability_id)
+                            if vehicle.capabilities.has_capability(capability_id):
+                                capability: Capability = vehicle.capabilities.get_capability(capability_id)  # pyright: ignore[reportAssignmentType]
+                            else:
+                                capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities)
+                                vehicle.capabilities.add_capability(capability_id, capability)
+                        else:
+                            raise APIError('Could not parse capability, id missing')
+                    for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
+                        vehicle.capabilities.remove_capability(capability_id)
+                else:
+                    vehicle.capabilities.clear_capabilities()
+            else:
+                vehicle.capabilities.clear_capabilities()
+
+            if 'specification' in vehicle_data and vehicle_data['specification'] is not None:
+                if 'model' in vehicle_data['specification'] and vehicle_data['specification']['model'] is not None:
+                    vehicle.model._set_value(vehicle_data['specification']['model'])  # pylint: disable=protected-access
+                else:
+                    vehicle.model._set_value(None)  # pylint: disable=protected-access
+                log_extra_keys(LOG_API, 'specification', vehicle_data['specification'],  {'model'})
+            else:
+                vehicle.model._set_value(None)  # pylint: disable=protected-access
+            log_extra_keys(LOG_API, 'api/v2/garage/vehicles/VIN', vehicle_data, {'softwareVersion'})
+
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}/driving-range'
+        range_data: Dict[str, Any] | None = self._fetch_data(url, self._session)
+        print(range_data)
+        if range_data:
+            captured_at: datetime = robust_time_parse(range_data['carCapturedTimestamp'])
+            # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
+            if 'carType' in range_data and range_data['carType'] is not None:
+                try:
+                    car_type = GenericVehicle.Type(range_data['carType'])
+                    if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, SkodaElectricVehicle):
+                        LOG.debug('Promoting %s to SkodaElectricVehicle object for %s', vehicle.__class__.__name__, vin)
+                        vehicle = SkodaElectricVehicle(origin=vehicle)
+                        self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                    elif car_type in [GenericVehicle.Type.FUEL,
+                                      GenericVehicle.Type.GASOLINE,
+                                      GenericVehicle.Type.PETROL,
+                                      GenericVehicle.Type.DIESEL,
+                                      GenericVehicle.Type.CNG,
+                                      GenericVehicle.Type.LPG] \
+                            and not isinstance(vehicle, SkodaCombustionVehicle):
+                        LOG.debug('Promoting %s to SkodaCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
+                        vehicle = SkodaCombustionVehicle(origin=vehicle)
+                        self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                    elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, SkodaHybridVehicle):
+                        LOG.debug('Promoting %s to SkodaHybridVehicle object for %s', vehicle.__class__.__name__, vin)
+                        vehicle = SkodaHybridVehicle(origin=vehicle)
+                        self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                except ValueError:
+                    LOG_API.warning('Unknown car type %s', range_data['carType'])
+                    car_type = GenericVehicle.Type.UNKNOWN
+                vehicle.type._set_value(car_type)  # pylint: disable=protected-access
+            if 'totalRangeInKm' in range_data and range_data['totalRangeInKm'] is not None:
+                # pylint: disable-next=protected-access
+                vehicle.drives.total_range._set_value(value=range_data['totalRangeInKm'], measured=captured_at, unit=Length.KM)
+            else:
+                vehicle.drives.total_range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+
+            drive_ids: set[str] = {'primary', 'secondary'}
+            for drive_id in drive_ids:
+                if f'{drive_id}EngineRange' in range_data and range_data[f'{drive_id}EngineRange'] is not None:
+                    try:
+                        engine_type: GenericDrive.Type = GenericDrive.Type(range_data[f'{drive_id}EngineRange']['engineType'])
+                    except ValueError:
+                        LOG_API.warning('Unknown engine_type type %s', range_data[f'{drive_id}EngineRange']['engineType'])
+                        engine_type: GenericDrive.Type = GenericDrive.Type.UNKNOWN
+
+                    if drive_id in vehicle.drives.drives:
+                        drive: GenericDrive = vehicle.drives.drives[drive_id]
+                    else:
+                        if engine_type == GenericDrive.Type.ELECTRIC:
+                            drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives)
+                        elif engine_type in [GenericDrive.Type.FUEL,
+                                             GenericDrive.Type.GASOLINE,
+                                             GenericDrive.Type.PETROL,
+                                             GenericDrive.Type.DIESEL,
+                                             GenericDrive.Type.CNG,
+                                             GenericDrive.Type.LPG]:
+                            drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives)
+                        else:
+                            drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives)
+                        drive.type._set_value(engine_type)  # pylint: disable=protected-access
+                        vehicle.drives.add_drive(drive)
+                    if 'currentSoCInPercent' in range_data[f'{drive_id}EngineRange'] \
+                            and range_data[f'{drive_id}EngineRange']['currentSoCInPercent'] is not None:
+                        # pylint: disable-next=protected-access
+                        drive.level._set_value(value=range_data[f'{drive_id}EngineRange']['currentSoCInPercent'], measured=captured_at)
+                    else:
+                        drive.level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    if 'remainingRangeInKm' in range_data[f'{drive_id}EngineRange'] and range_data[f'{drive_id}EngineRange']['remainingRangeInKm'] is not None:
+                        # pylint: disable-next=protected-access
+                        drive.range._set_value(value=range_data[f'{drive_id}EngineRange']['remainingRangeInKm'], measured=captured_at, unit=Length.KM)
+                    else:
+                        drive.range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+
+                    log_extra_keys(LOG_API, f'{drive_id}EngineRange', range_data, {'engineType', 'currentSoCInPercent', 'remainingRangeInKm'})
+            log_extra_keys(LOG_API, '/api/v2/vehicle-status/{vin}/driving-range', range_data, {'carCapturedTimestamp',
+                                                                                               'carType',
+                                                                                               'totalRangeInKm',
+                                                                                               'primaryEngineRange',
+                                                                                               'secondaryEngineRange'})
+
         url = f'https://api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}'
-        data: Dict[str, Any] | None = self._fetch_data(url, self._session2)
-        print(data)
-        if data is not None and 'remote' in data and data['remote'] is not None:
-            remote = data['remote']
-            if 'capturedAt' in remote and remote['capturedAt'] is not None:
-                captured_at: datetime = robust_time_parse(remote['capturedAt'])
+        vehicle_status_data: Dict[str, Any] | None = self._fetch_data(url, self._session)
+        print(vehicle_status_data)
+        if vehicle_status_data:
+            if 'remote' in vehicle_status_data and vehicle_status_data['remote'] is not None:
+                vehicle_status_data = vehicle_status_data['remote']
+        if vehicle_status_data:
+            if 'capturedAt' in vehicle_status_data and vehicle_status_data['capturedAt'] is not None:
+                captured_at: datetime = robust_time_parse(vehicle_status_data['capturedAt'])
             else:
                 raise APIError('Could not fetch vehicle status, capturedAt missing')
-            if 'mileageInKm' in remote and remote['mileageInKm'] is not None:
-                vehicle.odometer._set_value(value=remote['mileageInKm'], measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+            if 'mileageInKm' in vehicle_status_data and vehicle_status_data['mileageInKm'] is not None:
+                vehicle.odometer._set_value(value=vehicle_status_data['mileageInKm'], measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
             else:
                 vehicle.odometer._set_value(value=None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
-            if 'status' in remote and remote['status'] is not None:
-                if 'open' in remote['status'] and remote['status']['open'] is not None:
-                    if remote['status']['open'] == 'YES':
+            if 'status' in vehicle_status_data and vehicle_status_data['status'] is not None:
+                if 'open' in vehicle_status_data['status'] and vehicle_status_data['status']['open'] is not None:
+                    if vehicle_status_data['status']['open'] == 'YES':
                         vehicle.doors.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
-                    elif remote['status']['open'] == 'NO':
+                    elif vehicle_status_data['status']['open'] == 'NO':
                         vehicle.doors.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
                     else:
                         vehicle.doors.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                        LOG_API_DEBUG.info('Unknown door open state: %s', remote['status']['open'])
+                        LOG_API.info('Unknown door open state: %s', vehicle_status_data['status']['open'])
                 else:
                     vehicle.doors.open_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                if 'locked' in remote['status'] and remote['status']['locked'] is not None:
-                    if remote['status']['locked'] == 'YES':
+                if 'locked' in vehicle_status_data['status'] and vehicle_status_data['status']['locked'] is not None:
+                    if vehicle_status_data['status']['locked'] == 'YES':
                         vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
-                    elif remote['status']['locked'] == 'NO':
+                    elif vehicle_status_data['status']['locked'] == 'NO':
                         vehicle.doors.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
                     else:
                         vehicle.doors.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                        LOG_API_DEBUG.info('Unknown door lock state: %s', remote['status']['locked'])
+                        LOG_API.info('Unknown door lock state: %s', vehicle_status_data['status']['locked'])
                 else:
                     vehicle.doors.lock_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
             else:
                 vehicle.doors.open_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                 vehicle.doors.lock_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-            if 'doors' in remote and remote['doors'] is not None:
+            if 'doors' in vehicle_status_data and vehicle_status_data['doors'] is not None:
                 seen_door_ids: set[str] = set()
-                for door_status in remote['doors']:
+                for door_status in vehicle_status_data['doors']:
                     if 'name' in door_status and door_status['name'] is not None:
                         door_id = door_status['name']
                         seen_door_ids.add(door_id)
@@ -286,7 +413,7 @@ class Connector(BaseConnector):
                                 door.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
                                 door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
                             else:
-                                LOG_API_DEBUG.info('Unknown door status %s', door_status['status'])
+                                LOG_API.info('Unknown door status %s', door_status['status'])
                                 door.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
                                 door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
                         else:
@@ -294,18 +421,18 @@ class Connector(BaseConnector):
                             door.open_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                     else:
                         raise APIError('Could not parse door, name missing')
-                    log_extra_keys(LOG_API_DEBUG, 'doors', door_status, {'name', 'status'})
+                    log_extra_keys(LOG_API, 'doors', door_status, {'name', 'status'})
                 for door_to_remove in set(vehicle.doors.doors) - seen_door_ids:
                     vehicle.doors.doors[door_to_remove].enabled = False
                     vehicle.doors.doors.pop(door_to_remove)
-                log_extra_keys(LOG_API_DEBUG, 'status', remote['status'],  {'open', 'locked'})
+                log_extra_keys(LOG_API, 'status', vehicle_status_data['status'],  {'open', 'locked'})
             else:
                 vehicle.doors.open_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                 vehicle.doors.doors = {}
-            if 'windows' in remote and remote['windows'] is not None:
+            if 'windows' in vehicle_status_data and vehicle_status_data['windows'] is not None:
                 seen_window_ids: set[str] = set()
                 all_windows_closed: bool = True
-                for window_status in remote['windows']:
+                for window_status in vehicle_status_data['windows']:
                     if 'name' in window_status and window_status['name'] is not None:
                         window_id = window_status['name']
                         seen_window_ids.add(window_id)
@@ -325,13 +452,13 @@ class Connector(BaseConnector):
                             elif window_status['status'] == 'INVALID':
                                 window.open_state._set_value(Windows.OpenState.INVALID, measured=captured_at)  # pylint: disable=protected-access
                             else:
-                                LOG_API_DEBUG.info('Unknown window status %s', window_status['status'])
+                                LOG_API.info('Unknown window status %s', window_status['status'])
                                 window.open_state._set_value(Windows.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
                         else:
                             window.open_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                     else:
                         raise APIError('Could not parse window, name missing')
-                    log_extra_keys(LOG_API_DEBUG, 'doors', window_status, {'name', 'status'})
+                    log_extra_keys(LOG_API, 'doors', window_status, {'name', 'status'})
                 for window_to_remove in set(vehicle.windows.windows) - seen_window_ids:
                     vehicle.windows.windows[window_to_remove].enabled = False
                     vehicle.windows.windows.pop(window_to_remove)
@@ -342,22 +469,22 @@ class Connector(BaseConnector):
             else:
                 vehicle.windows.open_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                 vehicle.windows.windows = {}
-            if 'lights' in remote and remote['lights'] is not None:
+            if 'lights' in vehicle_status_data and vehicle_status_data['lights'] is not None:
                 seen_light_ids: set[str] = set()
-                if 'overallStatus' in remote['lights'] and remote['lights']['overallStatus'] is not None:
-                    if remote['lights']['overallStatus'] == 'ON':
+                if 'overallStatus' in vehicle_status_data['lights'] and vehicle_status_data['lights']['overallStatus'] is not None:
+                    if vehicle_status_data['lights']['overallStatus'] == 'ON':
                         vehicle.lights.light_state._set_value(Lights.LightState.ON, measured=captured_at)  # pylint: disable=protected-access
-                    elif remote['lights']['overallStatus'] == 'OFF':
+                    elif vehicle_status_data['lights']['overallStatus'] == 'OFF':
                         vehicle.lights.light_state._set_value(Lights.LightState.OFF, measured=captured_at)  # pylint: disable=protected-access
-                    elif remote['lights']['overallStatus'] == 'INVALID':
+                    elif vehicle_status_data['lights']['overallStatus'] == 'INVALID':
                         vehicle.lights.light_state._set_value(Lights.LightState.INVALID, measured=captured_at)  # pylint: disable=protected-access
                     else:
-                        LOG_API_DEBUG.info('Unknown light status %s', remote['lights']['overallStatus'])
+                        LOG_API.info('Unknown light status %s', vehicle_status_data['lights']['overallStatus'])
                         vehicle.lights.light_state._set_value(Lights.LightState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
                 else:
                     vehicle.lights.light_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                if 'lightsStatus' in remote['lights'] and remote['lights']['lightsStatus'] is not None:
-                    for light_status in remote['lights']['lightsStatus']:
+                if 'lightsStatus' in vehicle_status_data['lights'] and vehicle_status_data['lights']['lightsStatus'] is not None:
+                    for light_status in vehicle_status_data['lights']['lightsStatus']:
                         if 'name' in light_status and light_status['name'] is not None:
                             light_id: str = light_status['name']
                             seen_light_ids.add(light_id)
@@ -374,20 +501,20 @@ class Connector(BaseConnector):
                                 elif light_status['status'] == 'INVALID':
                                     light.light_state._set_value(Lights.LightState.INVALID, measured=captured_at)  # pylint: disable=protected-access
                                 else:
-                                    LOG_API_DEBUG.info('Unknown light status %s', light_status['status'])
+                                    LOG_API.info('Unknown light status %s', light_status['status'])
                                     light.light_state._set_value(Lights.LightState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
                             else:
                                 light.light_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                         else:
                             raise APIError('Could not parse light, name missing')
-                        log_extra_keys(LOG_API_DEBUG, 'lights', light_status, {'name', 'status'})
+                        log_extra_keys(LOG_API, 'lights', light_status, {'name', 'status'})
                     for light_to_remove in set(vehicle.lights.lights) - seen_light_ids:
                         vehicle.lights.lights[light_to_remove].enabled = False
                         vehicle.lights.lights.pop(light_to_remove)
                 else:
                     vehicle.lights.lights = {}
-                log_extra_keys(LOG_API_DEBUG, 'lights', remote['lights'], {'overallStatus', 'lightsStatus'})
-            log_extra_keys(LOG_API_DEBUG, 'vehicles', remote,  {'capturedAt', 'mileageInKm', 'status', 'doors', 'windows', 'lights'})
+                log_extra_keys(LOG_API, 'lights', vehicle_status_data['lights'], {'overallStatus', 'lightsStatus'})
+            log_extra_keys(LOG_API, 'vehicles', vehicle_status_data,  {'capturedAt', 'mileageInKm', 'status', 'doors', 'windows', 'lights'})
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """

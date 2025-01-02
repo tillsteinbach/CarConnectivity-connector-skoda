@@ -13,7 +13,6 @@ import logging
 from requests import Session
 
 from carconnectivity_connectors.skoda.auth.my_skoda_session import MySkodaSession
-from carconnectivity_connectors.skoda.auth.my_skoda_session2 import MySkodaSession2
 
 LOG = logging.getLogger("myskoda")
 
@@ -71,8 +70,6 @@ class SessionManager():
 
         if service == Service.MY_SKODA:
             session = MySkodaSession(session_user=session_user, token=token, metadata=metadata, cache=cache)
-        elif service == Service.MY_SKODA2:
-            session = MySkodaSession2(session_user=session_user, token=token, metadata=metadata, cache=cache)
         self.sessions[(service, session_user)] = session
         return session
 

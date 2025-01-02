@@ -28,7 +28,6 @@ class SessionUser():
 
 class Service(Enum):
     MY_SKODA = 'MySkoda'
-    MY_SKODA2 = 'MySkoda2'
 
     def __str__(self) -> str:
         return self.value

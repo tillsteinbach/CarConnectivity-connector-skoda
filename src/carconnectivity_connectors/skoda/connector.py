@@ -189,7 +189,6 @@ class Connector(BaseConnector):
         garage: Garage = self.car_connectivity.garage
         url = 'https://mysmob.api.connect.skoda-auto.cz/api/v2/garage'
         data: Dict[str, Any] | None = self._fetch_data(url, session=self._session)
-        print(data)
         seen_vehicle_vins: set[str] = set()
         if data is not None:
             if 'vehicles' in data and data['vehicles'] is not None:
@@ -231,7 +230,6 @@ class Connector(BaseConnector):
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/garage/vehicles/{vin}?' \
             'connectivityGenerations=MOD1&connectivityGenerations=MOD2&connectivityGenerations=MOD3&connectivityGenerations=MOD4'
         vehicle_data: Dict[str, Any] | None = self._fetch_data(url, self._session)
-        print(vehicle_data)
         if vehicle_data:
             if 'softwareVersion' in vehicle_data and vehicle_data['softwareVersion'] is not None:
                 vehicle.software.version._set_value(vehicle_data['softwareVersion'])  # pylint: disable=protected-access
@@ -270,7 +268,6 @@ class Connector(BaseConnector):
 
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}/driving-range'
         range_data: Dict[str, Any] | None = self._fetch_data(url, self._session)
-        print(range_data)
         if range_data:
             captured_at: datetime = robust_time_parse(range_data['carCapturedTimestamp'])
             # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
@@ -334,6 +331,10 @@ class Connector(BaseConnector):
                             and range_data[f'{drive_id}EngineRange']['currentSoCInPercent'] is not None:
                         # pylint: disable-next=protected-access
                         drive.level._set_value(value=range_data[f'{drive_id}EngineRange']['currentSoCInPercent'], measured=captured_at)
+                    elif 'currentFuelLevelInPercent' in range_data[f'{drive_id}EngineRange'] \
+                            and range_data[f'{drive_id}EngineRange']['currentFuelLevelInPercent'] is not None:
+                        # pylint: disable-next=protected-access
+                        drive.level._set_value(value=range_data[f'{drive_id}EngineRange']['currentFuelLevelInPercent'], measured=captured_at)
                     else:
                         drive.level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                     if 'remainingRangeInKm' in range_data[f'{drive_id}EngineRange'] and range_data[f'{drive_id}EngineRange']['remainingRangeInKm'] is not None:
@@ -342,7 +343,9 @@ class Connector(BaseConnector):
                     else:
                         drive.range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
 
-                    log_extra_keys(LOG_API, f'{drive_id}EngineRange', range_data, {'engineType', 'currentSoCInPercent', 'remainingRangeInKm'})
+                    log_extra_keys(LOG_API, f'{drive_id}EngineRange', range_data[f'{drive_id}EngineRange'], {'engineType',
+                                                                                                             'currentSoCInPercent', 
+                                                                                                             'remainingRangeInKm'})
             log_extra_keys(LOG_API, '/api/v2/vehicle-status/{vin}/driving-range', range_data, {'carCapturedTimestamp',
                                                                                                'carType',
                                                                                                'totalRangeInKm',
@@ -351,7 +354,6 @@ class Connector(BaseConnector):
 
         url = f'https://api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}'
         vehicle_status_data: Dict[str, Any] | None = self._fetch_data(url, self._session)
-        print(vehicle_status_data)
         if vehicle_status_data:
             if 'remote' in vehicle_status_data and vehicle_status_data['remote'] is not None:
                 vehicle_status_data = vehicle_status_data['remote']

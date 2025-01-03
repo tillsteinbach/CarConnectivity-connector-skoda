@@ -19,6 +19,7 @@ from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
+from carconnectivity.attributes import BooleanAttribute, DurationAttribute, DateAttribute
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -46,17 +47,22 @@ class Connector(BaseConnector):
     Attributes:
         max_age (Optional[int]): Maximum age for cached data in seconds.
     """
-    def __init__(self, car_connectivity: CarConnectivity, config: Dict) -> None:
-        BaseConnector.__init__(self, car_connectivity, config)
+    def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict) -> None:
+        BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config)
 
         self._background_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+
+        self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self)
+        self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self)
+        self.last_update: DateAttribute = DateAttribute(name="last_update", parent=self)
 
         # Configure logging
         if 'log_level' in config and config['log_level'] is not None:
             config['log_level'] = config['log_level'].upper()
             if config['log_level'] in logging.getLevelNamesMapping():
                 LOG.setLevel(config['log_level'])
+                self.log_level._set_value(config['log_level'])  # pylint: disable=protected-access
                 logging.getLogger('requests').setLevel(config['log_level'])
                 logging.getLogger('urllib3').setLevel(config['log_level'])
                 logging.getLogger('oauthlib').setLevel(config['log_level'])
@@ -96,14 +102,15 @@ class Connector(BaseConnector):
             except FileNotFoundError as err:
                 raise AuthenticationError(f'{netrc_filename} netrc-file was not found. Create it or provide username and password in config') from err
 
-        self.interval: int = 300
+        interval: int = 300
         if 'interval' in self.config:
-            self.interval = self.config['interval']
-            if self.interval < 300:
+            interval = self.config['interval']
+            if interval < 300:
                 raise ValueError('Intervall must be at least 300 seconds')
-        self.max_age: int = self.interval - 1
+        self.max_age: int = interval - 1
         if 'max_age' in self.config:
             self.max_age = self.config['max_age']
+        self.interval._set_value(timedelta(seconds=interval))  # pylint: disable=protected-access
 
         if username is None or password is None:
             raise AuthenticationError('Username or password not provided')
@@ -120,22 +127,33 @@ class Connector(BaseConnector):
     def _background_loop(self) -> None:
         self._stop_event.clear()
         while not self._stop_event.is_set():
+            interval = 300
             try:
-                self.fetch_all()
-            except TooManyRequestsError:
-                LOG.error('Retrieval error during update. Too many requests from your account. Will try again after 15 minutes')
+                try:
+                    self.fetch_all()
+                    self.last_update._set_value(value=datetime.now())  # pylint: disable=protected-access
+                    if self.interval.value is not None:
+                        interval: int = self.interval.value.total_seconds()
+                except Exception:
+                    self.connected._set_value(value=False)  # pylint: disable=protected-access
+                    if self.interval.value is not None:
+                        interval: int = self.interval.value.total_seconds()
+                    raise
+            except TooManyRequestsError as err:
+                LOG.error('Retrieval error during update. Too many requests from your account (%s). Will try again after 15 minutes', str(err))
                 self._stop_event.wait(900)
-            except RetrievalError:
-                LOG.error('Retrieval error during update. Will try again after configured interval of %ss', self.interval)
-                self._stop_event.wait(self.interval)
-            except APICompatibilityError:
-                LOG.error('API compatability error during update. Will try again after configured interval of %ss', self.interval)
-                self._stop_event.wait(self.interval)
-            except TemporaryAuthenticationError:
-                LOG.error('Temporary authentification error during update. Will try again after configured interval of %ss', self.interval)
-                self._stop_event.wait(self.interval)
+            except RetrievalError as err:
+                LOG.error('Retrieval error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self._stop_event.wait(interval)
+            except APICompatibilityError as err:
+                LOG.error('API compatability error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self._stop_event.wait(interval)
+            except TemporaryAuthenticationError as err:
+                LOG.error('Temporary authentification error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self._stop_event.wait(interval)
             else:
-                self._stop_event.wait(self.interval)
+                self.connected._set_value(value=True)  # pylint: disable=protected-access
+                self._stop_event.wait(interval)
 
     def persist(self) -> None:
         """
@@ -176,6 +194,7 @@ class Connector(BaseConnector):
         This method calls the `fetch_vehicles` method to retrieve vehicle data.
         """
         self.fetch_vehicles()
+        self.car_connectivity.transaction_end()
 
     def fetch_vehicles(self) -> None:
         """
@@ -344,7 +363,7 @@ class Connector(BaseConnector):
                         drive.range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
 
                     log_extra_keys(LOG_API, f'{drive_id}EngineRange', range_data[f'{drive_id}EngineRange'], {'engineType',
-                                                                                                             'currentSoCInPercent', 
+                                                                                                             'currentSoCInPercent',
                                                                                                              'remainingRangeInKm'})
             log_extra_keys(LOG_API, '/api/v2/vehicle-status/{vin}/driving-range', range_data, {'carCapturedTimestamp',
                                                                                                'carType',
@@ -559,18 +578,19 @@ class Connector(BaseConnector):
                 elif not allow_http_error or (allowed_errors is not None and status_response.status_code not in allowed_errors):
                     raise RetrievalError(f'Could not fetch data. Status Code was: {status_response.status_code}')
             except requests.exceptions.ConnectionError as connection_error:
-                raise RetrievalError from connection_error
+                raise RetrievalError(f'Connection error: {connection_error}.'
+                                     ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
             except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
-                raise RetrievalError from chunked_encoding_error
+                raise RetrievalError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
             except requests.exceptions.ReadTimeout as timeout_error:
-                raise RetrievalError from timeout_error
+                raise RetrievalError(f'Timeout during read: {timeout_error}') from timeout_error
             except requests.exceptions.RetryError as retry_error:
-                raise RetrievalError from retry_error
+                raise RetrievalError(f'Retrying failed: {retry_error}') from retry_error
             except requests.exceptions.JSONDecodeError as json_error:
                 if allow_empty:
                     data = None
                 else:
-                    raise RetrievalError from json_error
+                    raise RetrievalError(f'JSON decode error: {json_error}') from json_error
         return data
 
     def get_version(self) -> str:

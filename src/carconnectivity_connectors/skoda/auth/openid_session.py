@@ -374,7 +374,7 @@ class OpenIDSession(requests.Session):
                     self.login()
                 url, headers, data = self.add_token(url, body=data, headers=headers, access_type=access_type, token=token)
             except MissingTokenError:
-                LOG.error('Missing token')
+                LOG.info('Missing token, need new login')
                 self.login()
                 url, headers, data = self.add_token(url, body=data, headers=headers, access_type=access_type, token=token)
 

@@ -19,7 +19,7 @@ from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
-from carconnectivity.attributes import BooleanAttribute, DurationAttribute, DateAttribute
+from carconnectivity.attributes import BooleanAttribute, DurationAttribute
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -55,7 +55,6 @@ class Connector(BaseConnector):
 
         self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self)
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self)
-        self.last_update: DateAttribute = DateAttribute(name="last_update", parent=self)
 
         # Configure logging
         if 'log_level' in config and config['log_level'] is not None:

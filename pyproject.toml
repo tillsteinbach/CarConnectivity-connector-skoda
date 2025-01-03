@@ -14,7 +14,9 @@ authors = [
     { name = "Till Steinbach" }
 ]
 dependencies = [
-    "carconnectivity"
+    "carconnectivity",
+    "oauthlib~=3.2.2",
+    "requests~=2.32.3"
 ]
 readme = "README.md"
 license = { file = "LICENSE" }

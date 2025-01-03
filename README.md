@@ -5,6 +5,8 @@
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/tillsteinbach/CarConnectivity-connector-skoda)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/latest)
 [![GitHub](https://img.shields.io/github/license/tillsteinbach/CarConnectivity-connector-skoda)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/blob/master/LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/tillsteinbach/CarConnectivity-connector-skoda)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/issues)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/carconnectivity-connector-skoda?label=PyPI%20Downloads)](https://pypi.org/project/carconnectivity-connector-skoda/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/carconnectivity-connector-skoda)](https://pypi.org/project/carconnectivity-connector-skoda/)
 [![Donate at PayPal](https://img.shields.io/badge/Donate-PayPal-2997d8)](https://www.paypal.com/donate?hosted_button_id=2BVFF5GJ9SXAJ)
 [![Sponsor at Github](https://img.shields.io/badge/Sponsor-GitHub-28a745)](https://github.com/sponsors/tillsteinbach)
 

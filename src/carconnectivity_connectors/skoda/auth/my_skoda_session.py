@@ -26,10 +26,10 @@ from carconnectivity_connectors.skoda.auth.openid_session import AccessType
 from carconnectivity_connectors.skoda.auth.skoda_web_session import SkodaWebSession
 
 if TYPE_CHECKING:
-    from typing import Tuple, Dict
+    from typing import Set
 
 
-LOG: logging.Logger = logging.getLogger("carconnectivity-connector-skoda")
+LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.auth")
 
 
 class MySkodaSession(SkodaWebSession):
@@ -38,7 +38,7 @@ class MySkodaSession(SkodaWebSession):
     """
     def __init__(self, session_user, **kwargs) -> None:
         super(MySkodaSession, self).__init__(client_id='7f045eee-7003-4379-9968-9355ed2adb06@apps_vw-dilab_com',
-                                             refresh_url='https://tokenrefreshservice.apps.emea.vwapps.io/refreshTokens',
+                                             refresh_url='https://mysmob.api.connect.skoda-auto.cz/api/v1/authentication/refresh-token?tokenType=CONNECT',
                                              scope='address badge birthdate cars driversLicense dealers email mileage mbb nationalIdentifier openid phone profession profile vin',
                                              redirect_uri='myskoda://redirect/login/',
                                              session_user=session_user,
@@ -73,7 +73,7 @@ class MySkodaSession(SkodaWebSession):
     def refresh(self) -> None:
         # refresh tokens from refresh endpoint
         self.refresh_tokens(
-            'https://emea.bff.cariad.digital/user-login/refresh/v1',
+            'https://mysmob.api.connect.skoda-auto.cz/api/v1/authentication/refresh-token?tokenType=CONNECT',
         )
 
     def fetch_tokens(
@@ -133,15 +133,20 @@ class MySkodaSession(SkodaWebSession):
             token = json.loads(token_response)
         except json.decoder.JSONDecodeError as err:
             raise TemporaryAuthenticationError('Token could not be refreshed due to temporary WeConnect failure: json could not be decoded') from err
+        found_tokens: Set[str] = set()
         # Fix token keys, we want access_token instead of accessToken
         if 'accessToken' in token:
+            found_tokens.add('accessToken')
             token['access_token'] = token.pop('accessToken')
         # Fix token keys, we want id_token instead of idToken
         if 'idToken' in token:
+            found_tokens.add('idToken')
             token['id_token'] = token.pop('idToken')
         # Fix token keys, we want refresh_token instead of refreshToken
         if 'refreshToken' in token:
+            found_tokens.add('refreshToken')
             token['refresh_token'] = token.pop('refreshToken')
+        LOG.info(f'Found tokens in answer: {found_tokens}')
         # generate json from fixed dict
         fixed_token_response = to_unicode(json.dumps(token)).encode("utf-8")
         # Let OAuthlib parse the token
@@ -185,33 +190,32 @@ class MySkodaSession(SkodaWebSession):
         if not is_secure_transport(token_url):
             raise InsecureTransportError()
 
-        # Store old refresh token in case no new one is given
         refresh_token = refresh_token or self.refresh_token
 
-        if headers is None:
-            headers = self.headers
+        # Generate json body for token request
+        body: str = json.dumps(
+            {
+                'token': refresh_token,
+            })
 
-        # Request new tokens using the refresh token
-        token_response = self.get(
-            token_url,
-            auth=auth,
-            timeout=timeout,
-            headers=headers,
-            verify=verify,
-            withhold_token=False,  # pyright: ignore reportCallIssue
-            proxies=proxies,
-            access_type=AccessType.REFRESH  # pyright: ignore reportCallIssue
-        )
-        if token_response.status_code == requests.codes['unauthorized']:
-            raise AuthenticationError('Refreshing tokens failed: Server requests new authorization')
-        elif token_response.status_code in (requests.codes['internal_server_error'], requests.codes['service_unavailable'], requests.codes['gateway_timeout']):
-            raise TemporaryAuthenticationError('Token could not be refreshed due to temporary WeConnect failure: {tokenResponse.status_code}')
-        elif token_response.status_code == requests.codes['ok']:
-            # parse new tokens from response
-            self.parse_from_body(token_response.text)
-            if self.token is not None and "refresh_token" not in self.token:
-                LOG.debug("No new refresh token given. Re-using old.")
-                self.token["refresh_token"] = refresh_token
+        request_headers: CaseInsensitiveDict = self.headers  # pyright: ignore reportAssignmentType
+        request_headers['accept'] = 'application/json'
+        request_headers['content-type'] = 'application/json'
+
+        try:
+            # request tokens from token_url
+            token_response = self.post(token_url, headers=request_headers, data=body, allow_redirects=False,
+                                            access_type=AccessType.NONE)  # pyright: ignore reportCallIssue
+            if token_response.status_code == requests.codes['ok']:
+                # parse token from response body
+                token = self.parse_from_body(token_response.text)
+                return token
+            elif token_response.status_code == requests.codes['unauthorized']:
+                LOG.info('Refreshing tokens failed: Server requests new authorization, will login now')
+                self.login()
+                return self.token
+            else:
+                raise TemporaryAuthenticationError(f'Token could not be fetched due to temporary MySkoda failure: {token_response.status_code}')
+        except ConnectionError:
+            self.login()
             return self.token
-        else:
-            raise RetrievalError(f'Status Code from WeConnect while refreshing tokens was: {token_response.status_code}')

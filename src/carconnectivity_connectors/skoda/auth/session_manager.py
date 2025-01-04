@@ -14,7 +14,7 @@ from requests import Session
 
 from carconnectivity_connectors.skoda.auth.my_skoda_session import MySkodaSession
 
-LOG = logging.getLogger("myskoda")
+LOG = logging.getLogger("carconnectivity.connectors.skoda.auth")
 
 
 class SessionUser():
@@ -74,8 +74,9 @@ class SessionManager():
 
     def persist(self) -> None:
         for (service, user), session in self.sessions.items():
-            identifier: str = SessionManager.generate_identifier(service, user)
-            self.tokenstore[identifier] = {}
-            self.tokenstore[identifier]['token'] = session.token
-            self.tokenstore[identifier]['metadata'] = session.metadata
-            self.cache[identifier] = session.cache
+            if session.token is not None:
+                identifier: str = SessionManager.generate_identifier(service, user)
+                self.tokenstore[identifier] = {}
+                self.tokenstore[identifier]['token'] = session.token
+                self.tokenstore[identifier]['metadata'] = session.metadata
+                self.cache[identifier] = session.cache

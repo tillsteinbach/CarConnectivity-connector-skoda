@@ -4,8 +4,10 @@ from typing import TYPE_CHECKING
 
 from enum import Enum, auto
 import time
+from datetime import datetime, UTC
 import logging
 import requests
+from jwt import JWT
 
 from oauthlib.common import UNICODE_ASCII_CHARACTER_SET, generate_nonce, generate_token
 from oauthlib.oauth2.rfc6749.parameters import parse_authorization_code_response, parse_token_response, prepare_grant_uri
@@ -22,7 +24,7 @@ from carconnectivity_connectors.volkswagen.auth.helpers.blacklist_retry import B
 if TYPE_CHECKING:
     from typing import Dict
 
-LOG = logging.getLogger("carconnectivity-connector-skoda")
+LOG = logging.getLogger("carconnectivity.connectors.skoda.auth")
 
 
 class AccessType(Enum):
@@ -146,7 +148,17 @@ class OpenIDSession(requests.Session):
                 if self._token is not None and 'expires_in' in self._token:
                     new_token['expires_in'] = self._token['expires_in']
                 else:
-                    new_token['expires_in'] = 3600
+                    if 'id_token' in new_token:
+                        jwt_instance = JWT()
+                        meta_data = jwt_instance.decode(new_token['id_token'], do_verify=False)
+                        if 'exp' in meta_data:
+                            new_token['expires_at'] = meta_data['exp']
+                            expires_at = datetime.fromtimestamp(meta_data['exp'], tz=UTC)
+                            new_token['expires_in'] = (expires_at - datetime.now(tz=UTC)).total_seconds()
+                        else:
+                            new_token['expires_in'] = 3600
+                    else:
+                        new_token['expires_in'] = 3600
             # If expires_in is set and expires_at is not set we calculate expires_at from expires_in using the current time
             if 'expires_in' in new_token and 'expires_at' not in new_token:
                 new_token['expires_at'] = time.time() + int(new_token.get('expires_in'))

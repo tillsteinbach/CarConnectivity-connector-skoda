@@ -116,6 +116,7 @@ class Connector(BaseConnector):
 
         self._manager: SessionManager = SessionManager(tokenstore=car_connectivity.get_tokenstore(), cache=car_connectivity.get_cache())
         self._session: Session = self._manager.get_session(Service.MY_SKODA, SessionUser(username=username, password=password))
+        self._session.refresh()
 
         self._elapsed: List[timedelta] = []
 
@@ -363,6 +364,7 @@ class Connector(BaseConnector):
 
                     log_extra_keys(LOG_API, f'{drive_id}EngineRange', range_data[f'{drive_id}EngineRange'], {'engineType',
                                                                                                              'currentSoCInPercent',
+                                                                                                             'currentFuelLevelInPercent',
                                                                                                              'remainingRangeInKm'})
             log_extra_keys(LOG_API, '/api/v2/vehicle-status/{vin}/driving-range', range_data, {'carCapturedTimestamp',
                                                                                                'carType',

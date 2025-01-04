@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from enum import Enum, auto
 import time
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 import logging
 import requests
 from jwt import JWT
@@ -153,8 +153,8 @@ class OpenIDSession(requests.Session):
                         meta_data = jwt_instance.decode(new_token['id_token'], do_verify=False)
                         if 'exp' in meta_data:
                             new_token['expires_at'] = meta_data['exp']
-                            expires_at = datetime.fromtimestamp(meta_data['exp'], tz=UTC)
-                            new_token['expires_in'] = (expires_at - datetime.now(tz=UTC)).total_seconds()
+                            expires_at = datetime.fromtimestamp(meta_data['exp'], tz=timezone.utc)
+                            new_token['expires_in'] = (expires_at - datetime.now(tz=timezone.utc)).total_seconds()
                         else:
                             new_token['expires_in'] = 3600
                     else:

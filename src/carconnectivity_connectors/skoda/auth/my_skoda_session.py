@@ -191,6 +191,9 @@ class MySkodaSession(SkodaWebSession):
             raise InsecureTransportError()
 
         refresh_token = refresh_token or self.refresh_token
+        if refresh_token is None:
+            self.login()
+            return self.token
 
         # Generate json body for token request
         body: str = json.dumps(

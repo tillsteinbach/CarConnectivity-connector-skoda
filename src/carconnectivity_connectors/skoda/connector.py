@@ -123,8 +123,8 @@ class Connector(BaseConnector):
         session: requests.Session = self._manager.get_session(Service.MY_SKODA, SessionUser(username=username, password=password))
         if not isinstance(session, MySkodaSession):
             raise AuthenticationError('Could not create session')
-        self._session: MySkodaSession = session
-        self._session.refresh()
+        self.session: MySkodaSession = session
+        self.session.refresh()
 
         self._elapsed: List[timedelta] = []
 
@@ -142,11 +142,8 @@ class Connector(BaseConnector):
     def _background_connect_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
-                if not self._session.expired and self._session.access_token is not None:
-                    access_token: str = self._session.access_token
-                    LOG.info('Connecting to Skoda MQTT-Server')
-                    self._mqtt_client.connect_client(access_token)
-                    break
+                self._mqtt_client.connect()
+                break
             except ConnectionRefusedError as e:
                 LOG.error('Could not connect to MQTT-Server: %s, will retry in 10 seconds', e)
                 self._stop_event.wait(10)
@@ -214,7 +211,7 @@ class Connector(BaseConnector):
         if self._background_connect_thread is not None:
             self._background_connect_thread.join()
         self.persist()
-        self._session.close()
+        self.session.close()
         return super().shutdown()
 
     def fetch_all(self) -> None:
@@ -236,7 +233,7 @@ class Connector(BaseConnector):
             None
         """
         url = 'https://mysmob.api.connect.skoda-auto.cz/api/v1/users'
-        data: Dict[str, Any] | None = self._fetch_data(url, session=self._session)
+        data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
         if data:
             if 'id' in data and data['id'] is not None:
                 self.user_id = data['id']
@@ -252,7 +249,7 @@ class Connector(BaseConnector):
         """
         garage: Garage = self.car_connectivity.garage
         url = 'https://mysmob.api.connect.skoda-auto.cz/api/v2/garage'
-        data: Dict[str, Any] | None = self._fetch_data(url, session=self._session)
+        data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
         seen_vehicle_vins: set[str] = set()
         if data is not None:
             if 'vehicles' in data and data['vehicles'] is not None:
@@ -293,7 +290,7 @@ class Connector(BaseConnector):
             raise APIError('VIN is missing')
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/garage/vehicles/{vin}?' \
             'connectivityGenerations=MOD1&connectivityGenerations=MOD2&connectivityGenerations=MOD3&connectivityGenerations=MOD4'
-        vehicle_data: Dict[str, Any] | None = self._fetch_data(url, self._session)
+        vehicle_data: Dict[str, Any] | None = self._fetch_data(url, self.session)
         if vehicle_data:
             if 'softwareVersion' in vehicle_data and vehicle_data['softwareVersion'] is not None:
                 vehicle.software.version._set_value(vehicle_data['softwareVersion'])  # pylint: disable=protected-access
@@ -331,7 +328,7 @@ class Connector(BaseConnector):
             log_extra_keys(LOG_API, 'api/v2/garage/vehicles/VIN', vehicle_data, {'softwareVersion'})
 
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}/driving-range'
-        range_data: Dict[str, Any] | None = self._fetch_data(url, self._session)
+        range_data: Dict[str, Any] | None = self._fetch_data(url, self.session)
         if range_data:
             captured_at: datetime = robust_time_parse(range_data['carCapturedTimestamp'])
             # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
@@ -418,7 +415,7 @@ class Connector(BaseConnector):
                                                                                                'secondaryEngineRange'})
 
         url = f'https://api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}'
-        vehicle_status_data: Dict[str, Any] | None = self._fetch_data(url, self._session)
+        vehicle_status_data: Dict[str, Any] | None = self._fetch_data(url, self.session)
         if vehicle_status_data:
             if 'remote' in vehicle_status_data and vehicle_status_data['remote'] is not None:
                 vehicle_status_data = vehicle_status_data['remote']

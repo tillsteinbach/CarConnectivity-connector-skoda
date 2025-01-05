@@ -37,28 +37,45 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
 
         self.username = 'android-app'
 
+        self.on_pre_connect = self._on_pre_connect_callback
         self.on_connect = self._on_connect_callback
         self.on_message = self._on_message_callback
         self.on_disconnect = self._on_disconnect_callback
         self.on_subscribe = self._on_subscribe_callback
         self.subscribed_topics: Set[str] = set()
 
-    def connect_client(self, access_token: str) -> MQTTErrorCode:
+        self.tls_set(cert_reqs=ssl.CERT_NONE)
+
+    def connect(self, *args, **kwargs) -> MQTTErrorCode:
         """
-        Connects the MQTT client using the provided access token.
-
-        This method sets the client's password to the provided access token,
-        configures TLS settings, and attempts to connect to the MQTT broker.
-
-        Args:
-            access_token (str): The access token used as the password for the MQTT client.
+        Connects the MQTT client to the skoda server.
 
         Returns:
             MQTTErrorCode: The result of the connection attempt.
         """
-        self.password = access_token  # pylint: disable=attribute-defined-outside-init # this is a false positive, password has a setter in super class
-        self.tls_set(cert_reqs=ssl.CERT_NONE)
-        return super().connect(host='mqtt.messagehub.de', port=8883, keepalive=60)
+        return super().connect(*args, host='mqtt.messagehub.de', port=8883, keepalive=60, **kwargs)
+
+    def _on_pre_connect_callback(self, client, userdata) -> None:
+        """
+        Callback function that is called before the MQTT client connects to the broker.
+
+        Sets the client's password to the access token.
+
+        Args:
+            client: The MQTT client instance (unused).
+            userdata: The user data passed to the callback (unused).
+
+        Returns:
+            None
+        """
+        del client
+        del userdata
+
+        if self._skoda_connector.session.expired or self._skoda_connector.session.access_token is None:
+            self._skoda_connector.session.refresh()
+        if not self._skoda_connector.session.expired and self._skoda_connector.session.access_token is not None:
+            # pylint: disable-next=attribute-defined-outside-init # this is a false positive, password has a setter in super class
+            self._password = self._skoda_connector.session.access_token  # This is a bit hacky but if password attribute is used here there is an Exception
 
     def _on_carconnectivity_vehicle_enabled(self, element, flags):
         """
@@ -268,7 +285,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         del properties
         # reason_code 0 means success
         if reason_code == 0:
-            LOG.info('Connected to MQTT broker')
+            LOG.info('Connected to Skoda MQTT server')
             self._skoda_connector.connected._set_value(value=True)  # pylint: disable=protected-access
             observer_flags: Observable.ObserverEvent = Observable.ObserverEvent.ENABLED | Observable.ObserverEvent.DISABLED
             self._skoda_connector.car_connectivity.garage.add_observer(observer=self._on_carconnectivity_vehicle_enabled,

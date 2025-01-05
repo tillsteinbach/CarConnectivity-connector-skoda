@@ -23,14 +23,14 @@ from carconnectivity.attributes import BooleanAttribute, DurationAttribute
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
+from carconnectivity_connectors.skoda.auth.my_skoda_session import MySkodaSession
 from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle
 from carconnectivity_connectors.skoda.capability import Capability
 from carconnectivity_connectors.skoda._version import __version__
+from carconnectivity_connectors.skoda.mqtt_client import SkodaMQTTClient
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any
-
-    from requests import Session
 
     from carconnectivity.carconnectivity import CarConnectivity
 
@@ -50,11 +50,16 @@ class Connector(BaseConnector):
     def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict) -> None:
         BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config)
 
+        self._mqtt_client: SkodaMQTTClient = SkodaMQTTClient(skoda_connector=self)
+
         self._background_thread: Optional[threading.Thread] = None
+        self._background_connect_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
         self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self)
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self)
+
+        self.user_id: Optional[str] = None
 
         # Configure logging
         if 'log_level' in config and config['log_level'] is not None:
@@ -115,14 +120,36 @@ class Connector(BaseConnector):
             raise AuthenticationError('Username or password not provided')
 
         self._manager: SessionManager = SessionManager(tokenstore=car_connectivity.get_tokenstore(), cache=car_connectivity.get_cache())
-        self._session: Session = self._manager.get_session(Service.MY_SKODA, SessionUser(username=username, password=password))
+        session: requests.Session = self._manager.get_session(Service.MY_SKODA, SessionUser(username=username, password=password))
+        if not isinstance(session, MySkodaSession):
+            raise AuthenticationError('Could not create session')
+        self._session: MySkodaSession = session
         self._session.refresh()
 
         self._elapsed: List[timedelta] = []
 
     def startup(self) -> None:
+        self._stop_event.clear()
+        # Start background thread for Rest API polling
         self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
         self._background_thread.start()
+        # Start background thread for MQTT connection
+        self._background_connect_thread = threading.Thread(target=self._background_connect_loop, daemon=False)
+        self._background_connect_thread.start()
+        # Start MQTT thread
+        self._mqtt_client.loop_start()
+
+    def _background_connect_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                if not self._session.expired and self._session.access_token is not None:
+                    access_token: str = self._session.access_token
+                    LOG.info('Connecting to Skoda MQTT-Server')
+                    self._mqtt_client.connect_client(access_token)
+                    break
+            except ConnectionRefusedError as e:
+                LOG.error('Could not connect to MQTT-Server: %s, will retry in 10 seconds', e)
+                self._stop_event.wait(10)
 
     def _background_loop(self) -> None:
         self._stop_event.clear()
@@ -135,7 +162,6 @@ class Connector(BaseConnector):
                     if self.interval.value is not None:
                         interval: int = self.interval.value.total_seconds()
                 except Exception:
-                    self.connected._set_value(value=False)  # pylint: disable=protected-access
                     if self.interval.value is not None:
                         interval: int = self.interval.value.total_seconds()
                     raise
@@ -152,7 +178,6 @@ class Connector(BaseConnector):
                 LOG.error('Temporary authentification error during update (%s). Will try again after configured interval of %ss', str(err), interval)
                 self._stop_event.wait(interval)
             else:
-                self.connected._set_value(value=True)  # pylint: disable=protected-access
                 self._stop_event.wait(interval)
 
     def persist(self) -> None:
@@ -175,6 +200,9 @@ class Connector(BaseConnector):
         3. Sets the session and manager to None.
         4. Calls the shutdown method of the base connector.
         """
+        self._mqtt_client.disconnect()
+        # Stop MQTT thread
+        self._mqtt_client.loop_stop()
         # Disable and remove all vehicles managed soley by this connector
         for vehicle in self.car_connectivity.garage.list_vehicles():
             if len(vehicle.managing_connectors) == 1 and self in vehicle.managing_connectors:
@@ -183,6 +211,8 @@ class Connector(BaseConnector):
         self._stop_event.set()
         if self._background_thread is not None:
             self._background_thread.join()
+        if self._background_connect_thread is not None:
+            self._background_connect_thread.join()
         self.persist()
         self._session.close()
         return super().shutdown()
@@ -195,6 +225,21 @@ class Connector(BaseConnector):
         """
         self.fetch_vehicles()
         self.car_connectivity.transaction_end()
+
+    def fetch_user(self) -> None:
+        """
+        Fetches the user data from the Skoda Connect API.
+
+        This method sends a request to the Skoda Connect API to retrieve the user data associated with the user's account.
+
+        Returns:
+            None
+        """
+        url = 'https://mysmob.api.connect.skoda-auto.cz/api/v1/users'
+        data: Dict[str, Any] | None = self._fetch_data(url, session=self._session)
+        if data:
+            if 'id' in data and data['id'] is not None:
+                self.user_id = data['id']
 
     def fetch_vehicles(self) -> None:
         """
@@ -216,7 +261,7 @@ class Connector(BaseConnector):
                         seen_vehicle_vins.add(vehicle_dict['vin'])
                         vehicle: Optional[SkodaVehicle] = garage.get_vehicle(vehicle_dict['vin'])  # pyright: ignore[reportAssignmentType]
                         if not vehicle:
-                            vehicle = SkodaVehicle(vin=vehicle_dict['vin'], garage=garage)
+                            vehicle = SkodaVehicle(vin=vehicle_dict['vin'], garage=garage, managing_connector=self)
                             garage.add_vehicle(vehicle_dict['vin'], vehicle)
 
                         if 'licensePlate' in vehicle_dict and vehicle_dict['licensePlate'] is not None:

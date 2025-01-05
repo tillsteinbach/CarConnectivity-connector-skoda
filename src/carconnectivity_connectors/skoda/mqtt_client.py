@@ -362,10 +362,14 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         self._skoda_connector.connected._set_value(value=False)  # pylint: disable=protected-access
         self._skoda_connector.car_connectivity.garage.remove_observer(observer=self._on_carconnectivity_vehicle_enabled)
 
+        self.subscribed_topics.clear()
+
         if reason_code == 0:
             LOG.info('Client successfully disconnected')
         elif reason_code == 4:
             LOG.info('Client successfully disconnected: %s', userdata)
+        elif reason_code == 128:
+            LOG.info('Client disconnected: Needs new access token, trying to reconnect')
         elif reason_code == 137:
             LOG.error('Client disconnected: Server busy')
         elif reason_code == 139:

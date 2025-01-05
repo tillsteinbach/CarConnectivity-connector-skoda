@@ -146,7 +146,7 @@ class MySkodaSession(SkodaWebSession):
         if 'refreshToken' in token:
             found_tokens.add('refreshToken')
             token['refresh_token'] = token.pop('refreshToken')
-        LOG.info(f'Found tokens in answer: {found_tokens}')
+        LOG.debug(f'Found tokens in answer: {found_tokens}')
         # generate json from fixed dict
         fixed_token_response = to_unicode(json.dumps(token)).encode("utf-8")
         # Let OAuthlib parse the token

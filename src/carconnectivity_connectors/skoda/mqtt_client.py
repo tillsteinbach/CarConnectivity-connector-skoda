@@ -459,7 +459,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                         electric_drive.range._set_value(measured=measured_at, value=data['data']['chargedRange'])
                                 if 'timeToFinish' in data['data'] and data['data']['timeToFinish'] is not None \
                                         and vehicle.charging is not None:
-                                    remaining_duration: timedelta = timedelta(minutes=data['data']['timeToFinish'])
+                                    remaining_duration: timedelta = timedelta(minutes=int(data['data']['timeToFinish']))
                                     # pylint: disable-next=protected-access
                                     vehicle.charging.remaining_duration._set_value(measured=measured_at, value=remaining_duration)
                                 log_extra_keys(LOG_API, 'data', data['data'],  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish'})

@@ -2,24 +2,31 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import re
 import logging
 import uuid
 import ssl
+import json
+from datetime import timedelta
 
 from paho.mqtt.client import Client
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion, MQTTErrorCode
 
 from carconnectivity.observable import Observable
-from carconnectivity.vehicle import GenericVehicle
+from carconnectivity.vehicle import GenericVehicle, ElectricVehicle
+from carconnectivity.drive import ElectricDrive
+from carconnectivity.util import robust_time_parse, log_extra_keys
 
 
 if TYPE_CHECKING:
-    from typing import Set
+    from typing import Set, Dict, Any, Optional
+    from datetime import datetime
 
     from carconnectivity_connectors.skoda.connector import Connector
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
+LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda-api-debug")
 
 
 class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
@@ -377,7 +384,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         elif reason_code == 160:
             LOG.error('Client disconnected: Maximum connect time')
         else:
-            LOG.error('Client unexpectedly disconnected (%s), trying to reconnect', reason_code)
+            LOG.error('Client unexpectedly disconnected (%d: %s), trying to reconnect', reason_code, reason_code)
 
     def _on_subscribe_callback(self, mqttc, obj, mid, reason_codes, properties) -> None:
         """
@@ -422,5 +429,45 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         """
         del mqttc  # unused
         del obj  # unused
-        error_message = f'I don\'t understand message {msg.topic}: {msg.payload}'
-        LOG.info(error_message)
+        if len(msg.payload) == 0:
+            LOG_API.debug('MQTT topic %s: ignoring empty message', msg.topic)
+            return
+
+        # service_events
+        match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/service-event/(?P<service_event>\w+)$', msg.topic)
+        if match:
+            user_id: str = match.group('user_id')
+            vin: str = match.group('vin')
+            service_event: str = match.group('service_event')
+            data: Dict[str, Any] = json.loads(msg.payload)
+            if data is not None:
+                if 'timestamp' in data and data['timestamp'] is not None:
+                    measured_at: datetime = robust_time_parse(data['timestamp'])
+                else:
+                    measured_at: datetime = datetime.now()
+                if service_event == 'charging':
+                    if 'name' in data and data['name'] == 'change-charge-mode' or data['name'] == 'change-soc':
+                        if 'data' in data and data['data'] is not None:
+                            vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                            if isinstance(vehicle, ElectricVehicle):
+                                electric_drive: ElectricDrive = vehicle.get_electric_drive()
+                                if electric_drive is not None:
+                                    if 'soc' in data['data'] and data['data']['soc'] is not None:
+                                        electric_drive.level._set_value(measured=measured_at, value=data['data']['soc'])  # pylint: disable=protected-access
+                                    if 'chargedRange' in data['data'] and data['data']['chargedRange'] is not None:
+                                        # pylint: disable-next=protected-access
+                                        electric_drive.range._set_value(measured=measured_at, value=data['data']['chargedRange'])
+                                if 'timeToFinish' in data['data'] and data['data']['timeToFinish'] is not None \
+                                        and vehicle.charging is not None:
+                                    remaining_duration: timedelta = timedelta(minutes=data['data']['timeToFinish'])
+                                    # pylint: disable-next=protected-access
+                                    vehicle.charging.remaining_duration._set_value(measured=measured_at, value=remaining_duration)
+                                log_extra_keys(LOG_API, 'data', data['data'],  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish'})
+                                LOG.debug('Received %s event for vehicle %s from user %s', data['name'], vin, user_id)
+                                return
+                    LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
+                                 service_event, vin, user_id, msg.payload)
+                    return
+            LOG_API.info('Received unknown service event %s for vehicle %s from user %s: %s', service_event, vin, user_id, msg.payload)
+            return
+        LOG_API.info('I don\'t understand message %s: %s', msg.topic, msg.payload)

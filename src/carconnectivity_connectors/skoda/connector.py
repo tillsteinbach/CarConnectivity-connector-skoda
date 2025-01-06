@@ -14,7 +14,7 @@ from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
     TemporaryAuthenticationError, ConfigurationError
 from carconnectivity.util import robust_time_parse, log_extra_keys, config_remove_credentials
-from carconnectivity.units import Length
+from carconnectivity.units import Length, Speed, Power
 from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
@@ -267,7 +267,9 @@ class Connector(BaseConnector):
                             vehicle.license_plate._set_value(None)  # pylint: disable=protected-access
 
                         log_extra_keys(LOG_API, 'vehicles', vehicle_dict,  {'vin', 'licensePlate'})
-                        self.fetch_vehicle_status(vehicle)
+                        vehicle = self.fetch_vehicle_status(vehicle)
+                        if isinstance(vehicle, SkodaElectricVehicle):
+                            vehicle = self.fetch_charging(vehicle)
                     else:
                         raise APIError('Could not parse vehicle, vin missing')
         for vin in set(garage.list_vehicle_vins()) - seen_vehicle_vins:
@@ -275,7 +277,53 @@ class Connector(BaseConnector):
             if vehicle_to_remove is not None and vehicle_to_remove.is_managed_by_connector(self):
                 garage.remove_vehicle(vin)
 
-    def fetch_vehicle_status(self, vehicle: SkodaVehicle) -> None:
+    def fetch_charging(self, vehicle: SkodaElectricVehicle) -> SkodaElectricVehicle:
+        """
+        Fetches the charging information for a given Skoda electric vehicle.
+
+        Args:
+            vehicle (SkodaElectricVehicle): The Skoda electric vehicle object.
+
+        Raises:
+            APIError: If the VIN is missing or if the carCapturedTimestamp is missing in the response data.
+            ValueError: If the vehicle has no charging object.
+        """
+        vin = vehicle.vin.value
+        if vin is None:
+            raise APIError('VIN is missing')
+        if vehicle.charging is None:
+            raise ValueError('Vehicle has no charging object')
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}'
+        data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
+        if data is not None:
+            if 'carCapturedTimestamp' in data and data['carCapturedTimestamp'] is not None:
+                captured_at: datetime = robust_time_parse(data['carCapturedTimestamp'])
+            else:
+                raise APIError('Could not fetch charging, carCapturedTimestamp missing')
+            if 'status' in data and data['status'] is not None:
+                if 'chargingRateInKilometersPerHour' in data['status'] and data['status']['chargingRateInKilometersPerHour'] is not None:
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.rate._set_value(value=data['status']['chargingRateInKilometersPerHour'], measured=captured_at, unit=Speed.KMH)
+                else:
+                    vehicle.charging.rate._set_value(None, measured=captured_at, unit=Speed.KMH)  # pylint: disable=protected-access
+                if 'chargePowerInKw' in data['status'] and data['status']['chargePowerInKw'] is not None:
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.power._set_value(value=data['status']['chargePowerInKw'], measured=captured_at, unit=Power.KW)
+                else:
+                    vehicle.charging.power._set_value(None, measured=captured_at, unit=Power.KW)  # pylint: disable=protected-access
+                if 'remainingTimeToFullyChargedInMinutes' in data['status'] and data['status']['remainingTimeToFullyChargedInMinutes'] is not None:
+                    remaining_duration: timedelta = timedelta(minutes=data['status']['remainingTimeToFullyChargedInMinutes'])
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.remaining_duration._set_value(value=remaining_duration, measured=captured_at)
+                else:
+                    vehicle.charging.remaining_duration._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                log_extra_keys(LOG_API, 'status', data['status'],  {'chargingRateInKilometersPerHour',
+                                                                    'chargePowerInKw',
+                                                                    'remainingTimeToFullyChargedInMinutes'})
+            log_extra_keys(LOG_API, 'charging data', data,  {'carCapturedTimestamp', 'status'})
+        return vehicle
+
+    def fetch_vehicle_status(self, vehicle: SkodaVehicle) -> SkodaVehicle:
         """
         Fetches the status of a vehicle from the Skoda API.
 
@@ -579,6 +627,7 @@ class Connector(BaseConnector):
                     vehicle.lights.lights = {}
                 log_extra_keys(LOG_API, 'lights', vehicle_status_data['lights'], {'overallStatus', 'lightsStatus'})
             log_extra_keys(LOG_API, 'vehicles', vehicle_status_data,  {'capturedAt', 'mileageInKm', 'status', 'doors', 'windows', 'lights'})
+        return vehicle
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """

@@ -7,15 +7,21 @@ import logging
 import uuid
 import ssl
 import json
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from paho.mqtt.client import Client
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion, MQTTErrorCode
 
+from carconnectivity.errors import CarConnectivityError
 from carconnectivity.observable import Observable
-from carconnectivity.vehicle import GenericVehicle, ElectricVehicle
+from carconnectivity.vehicle import GenericVehicle
+
 from carconnectivity.drive import ElectricDrive
 from carconnectivity.util import robust_time_parse, log_extra_keys
+from carconnectivity.charging import Charging
+
+from carconnectivity_connectors.skoda.vehicle import SkodaElectricVehicle
+from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
 
 
 if TYPE_CHECKING:
@@ -101,7 +107,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         if (flags & Observable.ObserverEvent.ENABLED) and isinstance(element, GenericVehicle):
             self._subscribe_vehicle(element)
         elif (flags & Observable.ObserverEvent.DISABLED) and isinstance(element, GenericVehicle):
-            self._subscribe_vehicle(element)
+            self._unsubscribe_vehicle(element)
 
     def _subscribe_vehicles(self) -> None:
         """
@@ -235,15 +241,12 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             - Warning if the vehicle's VIN is not enabled or is None.
             - Info for each topic successfully unsubscribed.
         """
-        if not vehicle.vin.enabled or vehicle.vin.value is None:
-            LOG.warning('Could not unsubscribe to vehicle without vin')
-        else:
-            vin: str = vehicle.vin.value
-            for topic in self.subscribed_topics:
-                if vin in topic:
-                    self.unsubscribe(topic)
-                    self.subscribed_topics.remove(topic)
-                    LOG.debug('Unsubscribed from topic %s', topic)
+        vin: str = vehicle.id
+        for topic in self.subscribed_topics:
+            if vin in topic:
+                self.unsubscribe(topic)
+                self.subscribed_topics.remove(topic)
+                LOG.debug('Unsubscribed from topic %s', topic)
 
     def _on_connect_callback(self, mqttc, obj, flags, reason_code, properties) -> None:
         """
@@ -444,27 +447,56 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                 if 'timestamp' in data and data['timestamp'] is not None:
                     measured_at: datetime = robust_time_parse(data['timestamp'])
                 else:
-                    measured_at: datetime = datetime.now()
+                    measured_at: datetime = datetime.now(tz=timezone.utc)
                 if service_event == 'charging':
                     if 'name' in data and data['name'] == 'change-charge-mode' or data['name'] == 'change-soc':
                         if 'data' in data and data['data'] is not None:
                             vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
-                            if isinstance(vehicle, ElectricVehicle):
+                            if isinstance(vehicle, SkodaElectricVehicle):
                                 electric_drive: ElectricDrive = vehicle.get_electric_drive()
                                 if electric_drive is not None:
+                                    charging_state: Optional[Charging.ChargingState] = vehicle.charging.state.value
+                                    old_charging_state: Optional[Charging.ChargingState] = charging_state
+                                    if 'state' in data['data'] and data['data']['state'] is not None:
+                                        if data['data']['state'] in [item.value for item in SkodaCharging.SkodaChargingState]:
+                                            skoda_charging_state = SkodaCharging.SkodaChargingState(data['data']['state'])
+                                            charging_state = mapping_skoda_charging_state[skoda_charging_state]
+                                        else:
+                                            LOG_API.info('Unkown charging state %s not in %s', data['data']['state'], str(SkodaCharging.SkodaChargingState))
+                                            charging_state = Charging.ChargingState.UNKNOWN
+                                        # pylint: disable-next=protected-access
+                                        vehicle.charging.state._set_value(value=charging_state, measured=measured_at)
+                                        if charging_state == Charging.ChargingState.OFF:
+                                            # pylint: disable-next=protected-access
+                                            vehicle.charging.type._set_value(value=Charging.ChargingType.OFF, measured=measured_at)
+                                            # pylint: disable-next=protected-access
+                                            vehicle.charging.rate._set_value(value=0, measured=measured_at)
+                                            # pylint: disable-next=protected-access
+                                            vehicle.charging.power._set_value(value=0, measured=measured_at)
                                     if 'soc' in data['data'] and data['data']['soc'] is not None:
                                         electric_drive.level._set_value(measured=measured_at, value=data['data']['soc'])  # pylint: disable=protected-access
                                     if 'chargedRange' in data['data'] and data['data']['chargedRange'] is not None:
                                         # pylint: disable-next=protected-access
                                         electric_drive.range._set_value(measured=measured_at, value=data['data']['chargedRange'])
+                                    # If charging state changed, fetch charging again
+                                    if old_charging_state != charging_state:
+                                        try:
+                                            self._skoda_connector.fetch_charging(vehicle)
+                                        except CarConnectivityError as e:
+                                            LOG.error('Error while fetching charging: %s', e)
                                 if 'timeToFinish' in data['data'] and data['data']['timeToFinish'] is not None \
                                         and vehicle.charging is not None:
-                                    remaining_duration: timedelta = timedelta(minutes=int(data['data']['timeToFinish']))
+                                    try:
+                                        remaining_duration: Optional[timedelta] = timedelta(minutes=int(data['data']['timeToFinish']))
+                                    except ValueError:
+                                        remaining_duration: Optional[timedelta] = None
                                     # pylint: disable-next=protected-access
                                     vehicle.charging.remaining_duration._set_value(measured=measured_at, value=remaining_duration)
-                                log_extra_keys(LOG_API, 'data', data['data'],  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish'})
+                                log_extra_keys(LOG_API, 'data', data['data'],  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish', 'state'})
                                 LOG.debug('Received %s event for vehicle %s from user %s', data['name'], vin, user_id)
                                 return
+                            else:
+                                LOG.debug('Discarded %s event for vehicle %s from user %s: vehicle is not an electric vehicle', data['name'], vin, user_id)
                     LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
                                  service_event, vin, user_id, msg.payload)
                     return

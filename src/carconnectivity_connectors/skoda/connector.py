@@ -6,7 +6,7 @@ import threading
 import os
 import logging
 import netrc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import requests
 
 from carconnectivity.garage import Garage
@@ -20,12 +20,15 @@ from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute
+from carconnectivity.charging import Charging
+from carconnectivity.position import Position
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
 from carconnectivity_connectors.skoda.auth.my_skoda_session import MySkodaSession
 from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle
 from carconnectivity_connectors.skoda.capability import Capability
+from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
 from carconnectivity_connectors.skoda._version import __version__
 from carconnectivity_connectors.skoda.mqtt_client import SkodaMQTTClient
 
@@ -150,12 +153,17 @@ class Connector(BaseConnector):
 
     def _background_loop(self) -> None:
         self._stop_event.clear()
+        fetch: bool = True
         while not self._stop_event.is_set():
             interval = 300
             try:
                 try:
-                    self.fetch_all()
-                    self.last_update._set_value(value=datetime.now())  # pylint: disable=protected-access
+                    if fetch:
+                        self.fetch_all()
+                        fetch = False
+                    else:
+                        self.update_vehicles()
+                    self.last_update._set_value(value=datetime.now(tz=timezone.utc))  # pylint: disable=protected-access
                     if self.interval.value is not None:
                         interval: int = self.interval.value.total_seconds()
                 except Exception:
@@ -267,15 +275,37 @@ class Connector(BaseConnector):
                             vehicle.license_plate._set_value(None)  # pylint: disable=protected-access
 
                         log_extra_keys(LOG_API, 'vehicles', vehicle_dict,  {'vin', 'licensePlate'})
-                        vehicle = self.fetch_vehicle_status(vehicle)
-                        if isinstance(vehicle, SkodaElectricVehicle):
-                            vehicle = self.fetch_charging(vehicle)
+
+                        vehicle = self.fetch_vehicle_details(vehicle)
                     else:
                         raise APIError('Could not parse vehicle, vin missing')
         for vin in set(garage.list_vehicle_vins()) - seen_vehicle_vins:
             vehicle_to_remove = garage.get_vehicle(vin)
             if vehicle_to_remove is not None and vehicle_to_remove.is_managed_by_connector(self):
                 garage.remove_vehicle(vin)
+        self.update_vehicles()
+
+    def update_vehicles(self) -> None:
+        """
+        Updates the status of all vehicles in the garage managed by this connector.
+
+        This method iterates through all vehicle VINs in the garage, and for each vehicle that is
+        managed by this connector and is an instance of SkodaVehicle, it updates the vehicle's status
+        by fetching data from various APIs. If the vehicle is an instance of SkodaElectricVehicle,
+        it also fetches charging information.
+
+        Returns:
+            None
+        """
+        garage: Garage = self.car_connectivity.garage
+        for vin in set(garage.list_vehicle_vins()):
+            vehicle_to_update: Optional[GenericVehicle] = garage.get_vehicle(vin)
+            if vehicle_to_update is not None and isinstance(vehicle_to_update, SkodaVehicle) and vehicle_to_update.is_managed_by_connector(self):
+                vehicle_to_update = self.fetch_vehicle_status_second_api(vehicle_to_update)
+                vehicle_to_update = self.fetch_driving_range(vehicle_to_update)
+                vehicle_to_update = self.fetch_position(vehicle_to_update)
+                if isinstance(vehicle_to_update, SkodaElectricVehicle):
+                    vehicle_to_update = self.fetch_charging(vehicle_to_update)
 
     def fetch_charging(self, vehicle: SkodaElectricVehicle) -> SkodaElectricVehicle:
         """
@@ -301,6 +331,18 @@ class Connector(BaseConnector):
             else:
                 raise APIError('Could not fetch charging, carCapturedTimestamp missing')
             if 'status' in data and data['status'] is not None:
+                if 'state' in data['status'] and data['status']['state'] is not None:
+                    if data['status']['state'] in [item.name for item in SkodaCharging.SkodaChargingState]:
+                        skoda_charging_state = SkodaCharging.SkodaChargingState[data['status']['state']]
+                        charging_state: Charging.ChargingState = mapping_skoda_charging_state[skoda_charging_state]
+                    else:
+                        LOG_API.info('Unkown charging state %s not in %s', data['status']['state'], str(SkodaCharging.SkodaChargingState))
+                        charging_state = Charging.ChargingState.UNKNOWN
+
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.state._set_value(value=charging_state, measured=captured_at)
+                else:
+                    vehicle.charging.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                 if 'chargingRateInKilometersPerHour' in data['status'] and data['status']['chargingRateInKilometersPerHour'] is not None:
                     # pylint: disable-next=protected-access
                     vehicle.charging.rate._set_value(value=data['status']['chargingRateInKilometersPerHour'], measured=captured_at, unit=Speed.KMH)
@@ -319,13 +361,68 @@ class Connector(BaseConnector):
                     vehicle.charging.remaining_duration._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                 log_extra_keys(LOG_API, 'status', data['status'],  {'chargingRateInKilometersPerHour',
                                                                     'chargePowerInKw',
-                                                                    'remainingTimeToFullyChargedInMinutes'})
+                                                                    'remainingTimeToFullyChargedInMinutes',
+                                                                    'state'})
             log_extra_keys(LOG_API, 'charging data', data,  {'carCapturedTimestamp', 'status'})
         return vehicle
 
-    def fetch_vehicle_status(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+    def fetch_position(self, vehicle: SkodaVehicle) -> SkodaVehicle:
         """
-        Fetches the status of a vehicle from the Skoda API.
+        Fetches the position of the given Skoda vehicle and updates its position attributes.
+
+        Args:
+            vehicle (SkodaVehicle): The Skoda vehicle object containing the VIN and position attributes.
+
+        Returns:
+            SkodaVehicle: The updated Skoda vehicle object with the fetched position data.
+
+        Raises:
+            APIError: If the VIN is missing.
+            ValueError: If the vehicle has no position object.
+        """
+        vin = vehicle.vin.value
+        if vin is None:
+            raise APIError('VIN is missing')
+        if vehicle.position is None:
+            raise ValueError('Vehicle has no charging object')
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/maps/positions?vin={vin}'
+        data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
+        if data is not None:
+            if 'positions' in data and data['positions'] is not None:
+                for position_dict in data['positions']:
+                    if 'type' in position_dict and position_dict['type'] == 'VEHICLE':
+                        if 'gpsCoordinates' in position_dict and position_dict['gpsCoordinates'] is not None:
+                            if 'latitude' in position_dict['gpsCoordinates'] and position_dict['gpsCoordinates']['latitude'] is not None:
+                                latitude: Optional[float] = position_dict['gpsCoordinates']['latitude']
+                            else:
+                                latitude = None
+                            if 'longitude' in position_dict['gpsCoordinates'] and position_dict['gpsCoordinates']['longitude'] is not None:
+                                longitude: Optional[float] = position_dict['gpsCoordinates']['longitude']
+                            else:
+                                longitude = None
+                            vehicle.position.latitude._set_value(latitude)  # pylint: disable=protected-access
+                            vehicle.position.longitude._set_value(longitude)  # pylint: disable=protected-access
+                            vehicle.position.position_type._set_value(Position.PositionType.PARKING)  # pylint: disable=protected-access
+                        else:
+                            vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
+                            vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+                            vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+                    else:
+                        vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
+                        vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+                        vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+                    log_extra_keys(LOG_API, 'positions', position_dict,  {'type',
+                                                                          'gpsCoordinates',
+                                                                          'address'})
+            else:
+                vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
+                vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+                vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+        return vehicle
+
+    def fetch_vehicle_details(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+        """
+        Fetches the details of a vehicle from the Skoda API.
 
         Args:
             vehicle (GenericVehicle): The vehicle object containing the VIN.
@@ -374,7 +471,30 @@ class Connector(BaseConnector):
             else:
                 vehicle.model._set_value(None)  # pylint: disable=protected-access
             log_extra_keys(LOG_API, 'api/v2/garage/vehicles/VIN', vehicle_data, {'softwareVersion'})
+        return vehicle
 
+    def fetch_driving_range(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+        """
+        Fetches the driving range data for a given Skoda vehicle and updates the vehicle object accordingly.
+
+        Args:
+            vehicle (SkodaVehicle): The Skoda vehicle object for which to fetch the driving range data.
+
+        Returns:
+            SkodaVehicle: The updated Skoda vehicle object with the fetched driving range data.
+
+        Raises:
+            APIError: If the vehicle's VIN is missing.
+
+        Notes:
+            - The method fetches data from the Skoda API using the vehicle's VIN.
+            - It updates the vehicle's type if the fetched data indicates a different type (e.g., electric, combustion, hybrid).
+            - It updates the vehicle's total range and individual drive ranges (primary and secondary) based on the fetched data.
+            - It logs warnings for unknown car types and engine types.
+        """
+        vin = vehicle.vin.value
+        if vin is None:
+            raise APIError('VIN is missing')
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}/driving-range'
         range_data: Dict[str, Any] | None = self._fetch_data(url, self.session)
         if range_data:
@@ -461,7 +581,21 @@ class Connector(BaseConnector):
                                                                                                'totalRangeInKm',
                                                                                                'primaryEngineRange',
                                                                                                'secondaryEngineRange'})
+        return vehicle
 
+    def fetch_vehicle_status_second_api(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+        """
+        Fetches the status of a vehicle from other Skoda API.
+
+        Args:
+            vehicle (GenericVehicle): The vehicle object containing the VIN.
+
+        Returns:
+            None
+        """
+        vin = vehicle.vin.value
+        if vin is None:
+            raise APIError('VIN is missing')
         url = f'https://api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}'
         vehicle_status_data: Dict[str, Any] | None = self._fetch_data(url, self.session)
         if vehicle_status_data:

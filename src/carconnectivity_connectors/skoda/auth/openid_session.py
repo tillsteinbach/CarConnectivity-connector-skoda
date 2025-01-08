@@ -112,6 +112,10 @@ class OpenIDSession(requests.Session):
         if new_retries_value:
             # Retry on internal server error (500)
             retries = BlacklistRetry(total=new_retries_value,
+                                     connect=new_retries_value,
+                                     read=new_retries_value,
+                                     status=new_retries_value,
+                                     other=new_retries_value,
                                      backoff_factor=0.1,
                                      status_forcelist=[500],
                                      status_blacklist=[429],

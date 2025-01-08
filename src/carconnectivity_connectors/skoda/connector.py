@@ -14,7 +14,7 @@ from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
     TemporaryAuthenticationError, ConfigurationError
 from carconnectivity.util import robust_time_parse, log_extra_keys, config_remove_credentials
-from carconnectivity.units import Length, Speed, Power
+from carconnectivity.units import Length, Speed, Power, Temperature
 from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
@@ -22,6 +22,7 @@ from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute
 from carconnectivity.charging import Charging
 from carconnectivity.position import Position
+from carconnectivity.climatization import Climatization
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -303,9 +304,13 @@ class Connector(BaseConnector):
             if vehicle_to_update is not None and isinstance(vehicle_to_update, SkodaVehicle) and vehicle_to_update.is_managed_by_connector(self):
                 vehicle_to_update = self.fetch_vehicle_status_second_api(vehicle_to_update)
                 vehicle_to_update = self.fetch_driving_range(vehicle_to_update)
-                vehicle_to_update = self.fetch_position(vehicle_to_update)
-                if isinstance(vehicle_to_update, SkodaElectricVehicle):
-                    vehicle_to_update = self.fetch_charging(vehicle_to_update)
+                if vehicle_to_update.capabilities is not None and vehicle_to_update.capabilities.enabled:
+                    if vehicle_to_update.capabilities.has_capability('PARKING_POSITION'):
+                        vehicle_to_update = self.fetch_position(vehicle_to_update)
+                    if vehicle_to_update.capabilities.has_capability('CHARGING') and isinstance(vehicle_to_update, SkodaElectricVehicle):
+                        vehicle_to_update = self.fetch_charging(vehicle_to_update)
+                    if vehicle_to_update.capabilities.has_capability('AIR_CONDITIONING'):
+                        vehicle_to_update = self.fetch_air_conditioning(vehicle_to_update)
 
     def fetch_charging(self, vehicle: SkodaElectricVehicle) -> SkodaElectricVehicle:
         """
@@ -355,10 +360,11 @@ class Connector(BaseConnector):
                     vehicle.charging.power._set_value(None, measured=captured_at, unit=Power.KW)  # pylint: disable=protected-access
                 if 'remainingTimeToFullyChargedInMinutes' in data['status'] and data['status']['remainingTimeToFullyChargedInMinutes'] is not None:
                     remaining_duration: timedelta = timedelta(minutes=data['status']['remainingTimeToFullyChargedInMinutes'])
+                    estimated_date_reached: datetime = captured_at + remaining_duration
                     # pylint: disable-next=protected-access
-                    vehicle.charging.remaining_duration._set_value(value=remaining_duration, measured=captured_at)
+                    vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached, measured=captured_at)
                 else:
-                    vehicle.charging.remaining_duration._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    vehicle.charging.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                 log_extra_keys(LOG_API, 'status', data['status'],  {'chargingRateInKilometersPerHour',
                                                                     'chargePowerInKw',
                                                                     'remainingTimeToFullyChargedInMinutes',
@@ -418,6 +424,109 @@ class Connector(BaseConnector):
                 vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
                 vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
                 vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+        return vehicle
+
+    def fetch_air_conditioning(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+        """
+        Fetches the air conditioning data for a given Skoda vehicle and updates the vehicle object with the retrieved data.
+
+        Args:
+            vehicle (SkodaVehicle): The vehicle object for which to fetch air conditioning data.
+
+        Returns:
+            SkodaVehicle: The updated vehicle object with the fetched air conditioning data.
+
+        Raises:
+            APIError: If the VIN is missing or if the carCapturedTimestamp is missing in the response data.
+            ValueError: If the vehicle has no charging object.
+
+        Notes:
+            - The method fetches data from the Skoda API using the vehicle's VIN.
+            - It updates the vehicle's climatization state, estimated date to reach target temperature, target temperature, and outside temperature.
+            - Logs additional keys found in the response data for debugging purposes.
+        """
+        vin = vehicle.vin.value
+        if vin is None:
+            raise APIError('VIN is missing')
+        if vehicle.position is None:
+            raise ValueError('Vehicle has no charging object')
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}'
+        data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
+        if data is not None:
+            if 'carCapturedTimestamp' in data and data['carCapturedTimestamp'] is not None:
+                captured_at: datetime = robust_time_parse(data['carCapturedTimestamp'])
+            else:
+                raise APIError('Could not fetch air conditioning, carCapturedTimestamp missing')
+            if 'state' in data and data['state'] is not None:
+                if data['state'] in [item.name for item in Climatization.ClimatizationState]:
+                    climatization_state: Climatization.ClimatizationState = Climatization.ClimatizationState[data['state']]
+                else:
+                    LOG_API.info('Unknown climatization state %s not in %s', data['state'], str(Climatization.ClimatizationState))
+                    climatization_state = Climatization.ClimatizationState.UNKNOWN
+                vehicle.climatization.state._set_value(value=climatization_state, measured=captured_at)  # pylint: disable=protected-access
+            else:
+                vehicle.climatization.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+            if 'estimatedDateTimeToReachTargetTemperature' in data and data['estimatedDateTimeToReachTargetTemperature'] is not None:
+                estimated_reach: datetime = robust_time_parse(data['estimatedDateTimeToReachTargetTemperature'])
+                if estimated_reach is not None:
+                    vehicle.climatization.estimated_date_reached._set_value(value=estimated_reach, measured=captured_at)  # pylint: disable=protected-access
+                else:
+                    vehicle.climatization.estimated_date_reached._set_value(value=None, measured=captured_at)  # pylint: disable=protected-access
+            else:
+                vehicle.climatization.estimated_date_reached._set_value(value=None, measured=captured_at)  # pylint: disable=protected-access
+            if 'targetTemperature' in data and data['targetTemperature'] is not None:
+                unit: Temperature = Temperature.UNKNOWN
+                if 'unitInCar' in data['targetTemperature'] and data['targetTemperature']['unitInCar'] is not None:
+                    if data['targetTemperature']['unitInCar'] == 'CELSIUS':
+                        unit = Temperature.C
+                    elif data['targetTemperature']['unitInCar'] == 'FAHRENHEIT':
+                        unit = Temperature.F
+                    elif data['targetTemperature']['unitInCar'] == 'KELVIN':
+                        unit = Temperature.K
+                    else:
+                        LOG_API.info('Unknown temperature unit for targetTemperature in air-conditioning %s', data['targetTemperature']['unitInCar'])
+                if 'temperatureValue' in data['targetTemperature'] and data['targetTemperature']['temperatureValue'] is not None:
+                    # pylint: disable-next=protected-access
+                    vehicle.climatization.target_temperature._set_value(value=data['targetTemperature']['temperatureValue'],
+                                                                        measured=captured_at,
+                                                                        unit=unit)
+                else:
+                    vehicle.climatization.target_temperature._set_value(value=None, measured=captured_at, unit=unit)  # pylint: disable=protected-access
+                log_extra_keys(LOG_API, 'targetTemperature', data['targetTemperature'],  {'unitInCar', 'temperatureValue'})
+            else:
+                # pylint: disable-next=protected-access
+                vehicle.climatization.target_temperature._set_value(value=None, measured=captured_at, unit=Temperature.UNKNOWN)
+            if 'outsideTemperature' in data and data['outsideTemperature'] is not None:
+                if 'carCapturedTimestamp' in data['outsideTemperature'] and data['outsideTemperature']['carCapturedTimestamp'] is not None:
+                    outside_captured_at: datetime = robust_time_parse(data['outsideTemperature']['carCapturedTimestamp'])
+                else:
+                    outside_captured_at = captured_at
+                if 'temperatureUnit' in data['outsideTemperature'] and data['outsideTemperature']['temperatureUnit'] is not None:
+                    unit: Temperature = Temperature.UNKNOWN
+                    if data['outsideTemperature']['temperatureUnit'] == 'CELSIUS':
+                        unit = Temperature.C
+                    elif data['outsideTemperature']['temperatureUnit'] == 'FAHRENHEIT':
+                        unit = Temperature.F
+                    elif data['outsideTemperature']['temperatureUnit'] == 'KELVIN':
+                        unit = Temperature.K
+                    else:
+                        LOG_API.info('Unknown temperature unit for outsideTemperature in air-conditioning %s', data['targetTemperature']['temperatureUnit'])
+                    if 'temperatureValue' in data['outsideTemperature'] and data['outsideTemperature']['temperatureValue'] is not None:
+                        # pylint: disable-next=protected-access
+                        vehicle.outside_temperature._set_value(value=data['outsideTemperature']['temperatureValue'],
+                                                               measured=outside_captured_at,
+                                                               unit=unit)
+                    else:
+                        # pylint: disable-next=protected-access
+                        vehicle.outside_temperature._set_value(value=None, measured=outside_captured_at, unit=Temperature.UNKNOWN)
+                else:
+                    # pylint: disable-next=protected-access
+                    vehicle.outside_temperature._set_value(value=None, measured=outside_captured_at, unit=Temperature.UNKNOWN)
+                log_extra_keys(LOG_API, 'targetTemperature', data['outsideTemperature'],  {'carCapturedTimestamp', 'temperatureUnit', 'temperatureValue'})
+            else:
+                vehicle.outside_temperature._set_value(value=None, measured=None, unit=Temperature.UNKNOWN)  # pylint: disable=protected-access
+            log_extra_keys(LOG_API, 'air-condition', data,  {'carCapturedTimestamp', 'state', 'estimatedDateTimeToReachTargetTemperature'
+                                                             'targetTemperature', 'outsideTemperature'})
         return vehicle
 
     def fetch_vehicle_details(self, vehicle: SkodaVehicle) -> SkodaVehicle:

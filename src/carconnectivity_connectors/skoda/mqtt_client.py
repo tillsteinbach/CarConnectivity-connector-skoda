@@ -20,7 +20,7 @@ from carconnectivity.drive import ElectricDrive
 from carconnectivity.util import robust_time_parse, log_extra_keys
 from carconnectivity.charging import Charging
 
-from carconnectivity_connectors.skoda.vehicle import SkodaElectricVehicle
+from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
 
 
@@ -437,7 +437,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             return
 
         # service_events
-        match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/service-event/(?P<service_event>\w+)$', msg.topic)
+        match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/service-event/(?P<service_event>[a-zA-Z0-9-_]+)$', msg.topic)
         if match:
             user_id: str = match.group('user_id')
             vin: str = match.group('vin')
@@ -488,10 +488,11 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                         and vehicle.charging is not None:
                                     try:
                                         remaining_duration: Optional[timedelta] = timedelta(minutes=int(data['data']['timeToFinish']))
+                                        estimated_date_reached: Optional[datetime] = measured_at + remaining_duration
                                     except ValueError:
-                                        remaining_duration: Optional[timedelta] = None
+                                        estimated_date_reached: Optional[datetime] = None
                                     # pylint: disable-next=protected-access
-                                    vehicle.charging.remaining_duration._set_value(measured=measured_at, value=remaining_duration)
+                                    vehicle.charging.estimated_date_reached._set_value(measured=measured_at, value=estimated_date_reached)
                                 log_extra_keys(LOG_API, 'data', data['data'],  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish', 'state'})
                                 LOG.debug('Received %s event for vehicle %s from user %s', data['name'], vin, user_id)
                                 return
@@ -500,6 +501,39 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                     LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
                                  service_event, vin, user_id, msg.payload)
                     return
+                elif service_event == 'air-conditioning':
+                    if 'name' in data and data['name'] == 'change-remaining-time':
+                        if 'data' in data and data['data'] is not None:
+                            vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                            if isinstance(vehicle, SkodaVehicle):
+                                try:
+                                    self._skoda_connector.fetch_air_conditioning(vehicle)
+                                except CarConnectivityError as e:
+                                    LOG.error('Error while fetching charging: %s', e)
+                    LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
+                                 service_event, vin, user_id, msg.payload)
+                    return
             LOG_API.info('Received unknown service event %s for vehicle %s from user %s: %s', service_event, vin, user_id, msg.payload)
             return
+        # service_events
+        match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/operation-request/(?P<operation_request>[a-zA-Z0-9-_/]+)$', msg.topic)
+        if match:
+            user_id: str = match.group('user_id')
+            vin: str = match.group('vin')
+            operation_request: str = match.group('operation_request')
+            data: Dict[str, Any] = json.loads(msg.payload)
+            if data is not None:
+                if operation_request == 'air-conditioning/start-stop-air-conditioning':
+                    vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                    if isinstance(vehicle, SkodaVehicle):
+                        if 'status' in data and data['status'] is not None:
+                            if data['status'] == 'COMPLETED_SUCCESS':
+                                LOG.debug('Received %s operation request for vehicle %s from user %s', operation_request, vin, user_id)
+                                try:
+                                    self._skoda_connector.fetch_air_conditioning(vehicle)
+                                except CarConnectivityError as e:
+                                    LOG.error('Error while fetching air-conditioning: %s', e)
+                                return
+                    LOG_API.info('Received unknown operation request %s for vehicle %s from user %s: %s', operation_request, vin, user_id, msg.payload)
+                    return
         LOG_API.info('I don\'t understand message %s: %s', msg.topic, msg.payload)

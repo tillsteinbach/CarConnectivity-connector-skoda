@@ -492,6 +492,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     try:
                                         remaining_duration: Optional[timedelta] = timedelta(minutes=int(data['data']['timeToFinish']))
                                         estimated_date_reached: Optional[datetime] = measured_at + remaining_duration
+                                        estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
                                     except ValueError:
                                         estimated_date_reached: Optional[datetime] = None
                                     # pylint: disable-next=protected-access

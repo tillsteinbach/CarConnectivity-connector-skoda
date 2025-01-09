@@ -361,6 +361,7 @@ class Connector(BaseConnector):
                 if 'remainingTimeToFullyChargedInMinutes' in data['status'] and data['status']['remainingTimeToFullyChargedInMinutes'] is not None:
                     remaining_duration: timedelta = timedelta(minutes=data['status']['remainingTimeToFullyChargedInMinutes'])
                     estimated_date_reached: datetime = captured_at + remaining_duration
+                    estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
                     # pylint: disable-next=protected-access
                     vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached, measured=captured_at)
                 else:

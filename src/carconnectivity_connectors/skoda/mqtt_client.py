@@ -7,6 +7,7 @@ import logging
 import uuid
 import ssl
 import json
+import threading
 from datetime import timedelta, timezone
 
 from paho.mqtt.client import Client
@@ -56,6 +57,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         self.on_disconnect = self._on_disconnect_callback
         self.on_subscribe = self._on_subscribe_callback
         self.subscribed_topics: Set[str] = set()
+
+        self.delayed_access_function_timers: Dict[str, threading.Timer] = {}
 
         self.tls_set(cert_reqs=ssl.CERT_NONE)
 
@@ -437,7 +440,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             return
 
         # service_events
-        match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/service-event/(?P<service_event>[a-zA-Z0-9-_]+)$', msg.topic)
+        match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/service-event/(?P<service_event>[a-zA-Z0-9-_/]+)$', msg.topic)
         if match:
             user_id: str = match.group('user_id')
             vin: str = match.group('vin')
@@ -481,7 +484,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     # If charging state changed, fetch charging again
                                     if old_charging_state != charging_state:
                                         try:
-                                            self._skoda_connector.fetch_charging(vehicle)
+                                            self._skoda_connector.fetch_charging(vehicle, no_cache=True)
                                         except CarConnectivityError as e:
                                             LOG.error('Error while fetching charging: %s', e)
                                 if 'timeToFinish' in data['data'] and data['data']['timeToFinish'] is not None \
@@ -507,9 +510,55 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                             vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
                             if isinstance(vehicle, SkodaVehicle):
                                 try:
-                                    self._skoda_connector.fetch_air_conditioning(vehicle)
+                                    self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching charging: %s', e)
+                    LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
+                                 service_event, vin, user_id, msg.payload)
+                    return
+                elif service_event == 'vehicle-status/access':
+                    if 'name' in data and data['name'] == 'change-access':
+                        if 'data' in data and data['data'] is not None:
+                            vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                            if isinstance(vehicle, SkodaVehicle):
+                                def delayed_access_function(vehicle: SkodaVehicle):
+                                    """
+                                    Function to be executed after a delay of two seconds.
+                                    """
+                                    vin = vehicle.id
+                                    self.delayed_access_function_timers.pop(vin)
+                                    if vehicle.capabilities is not None and vehicle.capabilities.enabled \
+                                            and vehicle.capabilities.has_capability('CHARGING') and isinstance(vehicle, SkodaElectricVehicle):
+                                        try:
+                                            self._skoda_connector.fetch_charging(vehicle, no_cache=True)
+                                        except CarConnectivityError as e:
+                                            LOG.error('Error while fetching charging: %s', e)
+                                    if vehicle.capabilities is not None and vehicle.capabilities.enabled \
+                                            and vehicle.capabilities.has_capability('PARKING_POSITION'):
+                                        try:
+                                            self._skoda_connector.fetch_position(vehicle, no_cache=True)
+                                        except CarConnectivityError as e:
+                                            LOG.error('Error while fetching position: %s', e)
+                                    if vehicle.capabilities is not None and vehicle.capabilities.enabled \
+                                            and vehicle.capabilities.has_capability('AIR_CONDITIONING'):
+                                        try:
+                                            self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
+                                        except CarConnectivityError as e:
+                                            LOG.error('Error while fetching air conditioning: %s', e)
+                                    try:
+                                        self._skoda_connector.fetch_vehicle_status_second_api(vehicle, no_cache=True)
+                                    except CarConnectivityError as e:
+                                        LOG.error('Error while fetching status second API: %s', e)
+                                    try:
+                                        self._skoda_connector.fetch_driving_range(vehicle, no_cache=True)
+                                    except CarConnectivityError as e:
+                                        LOG.error('Error while fetching driving range: %s', e)
+
+                                if vin in self.delayed_access_function_timers:
+                                    self.delayed_access_function_timers[vin].cancel()
+                                self.delayed_access_function_timers[vin] = threading.Timer(2.0, delayed_access_function, kwargs={'vehicle': vehicle})
+                                self.delayed_access_function_timers[vin].start()
+
                     LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
                                  service_event, vin, user_id, msg.payload)
                     return
@@ -530,7 +579,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                             if data['status'] == 'COMPLETED_SUCCESS':
                                 LOG.debug('Received %s operation request for vehicle %s from user %s', operation_request, vin, user_id)
                                 try:
-                                    self._skoda_connector.fetch_air_conditioning(vehicle)
+                                    self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching air-conditioning: %s', e)
                                 return

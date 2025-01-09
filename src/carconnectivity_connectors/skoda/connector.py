@@ -312,7 +312,7 @@ class Connector(BaseConnector):
                     if vehicle_to_update.capabilities.has_capability('AIR_CONDITIONING'):
                         vehicle_to_update = self.fetch_air_conditioning(vehicle_to_update)
 
-    def fetch_charging(self, vehicle: SkodaElectricVehicle) -> SkodaElectricVehicle:
+    def fetch_charging(self, vehicle: SkodaElectricVehicle, no_cache: bool = False) -> SkodaElectricVehicle:
         """
         Fetches the charging information for a given Skoda electric vehicle.
 
@@ -329,7 +329,7 @@ class Connector(BaseConnector):
         if vehicle.charging is None:
             raise ValueError('Vehicle has no charging object')
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}'
-        data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
+        data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if data is not None:
             if 'carCapturedTimestamp' in data and data['carCapturedTimestamp'] is not None:
                 captured_at: datetime = robust_time_parse(data['carCapturedTimestamp'])
@@ -372,7 +372,7 @@ class Connector(BaseConnector):
             log_extra_keys(LOG_API, 'charging data', data,  {'carCapturedTimestamp', 'status'})
         return vehicle
 
-    def fetch_position(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+    def fetch_position(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
         """
         Fetches the position of the given Skoda vehicle and updates its position attributes.
 
@@ -392,7 +392,7 @@ class Connector(BaseConnector):
         if vehicle.position is None:
             raise ValueError('Vehicle has no charging object')
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/maps/positions?vin={vin}'
-        data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
+        data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if data is not None:
             if 'positions' in data and data['positions'] is not None:
                 for position_dict in data['positions']:
@@ -426,7 +426,7 @@ class Connector(BaseConnector):
                 vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
         return vehicle
 
-    def fetch_air_conditioning(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+    def fetch_air_conditioning(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
         """
         Fetches the air conditioning data for a given Skoda vehicle and updates the vehicle object with the retrieved data.
 
@@ -451,7 +451,7 @@ class Connector(BaseConnector):
         if vehicle.position is None:
             raise ValueError('Vehicle has no charging object')
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}'
-        data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
+        data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if data is not None:
             if 'carCapturedTimestamp' in data and data['carCapturedTimestamp'] is not None:
                 captured_at: datetime = robust_time_parse(data['carCapturedTimestamp'])
@@ -529,7 +529,7 @@ class Connector(BaseConnector):
                                                              'targetTemperature', 'outsideTemperature'})
         return vehicle
 
-    def fetch_vehicle_details(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+    def fetch_vehicle_details(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
         """
         Fetches the details of a vehicle from the Skoda API.
 
@@ -544,7 +544,7 @@ class Connector(BaseConnector):
             raise APIError('VIN is missing')
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/garage/vehicles/{vin}?' \
             'connectivityGenerations=MOD1&connectivityGenerations=MOD2&connectivityGenerations=MOD3&connectivityGenerations=MOD4'
-        vehicle_data: Dict[str, Any] | None = self._fetch_data(url, self.session)
+        vehicle_data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if vehicle_data:
             if 'softwareVersion' in vehicle_data and vehicle_data['softwareVersion'] is not None:
                 vehicle.software.version._set_value(vehicle_data['softwareVersion'])  # pylint: disable=protected-access
@@ -582,7 +582,7 @@ class Connector(BaseConnector):
             log_extra_keys(LOG_API, 'api/v2/garage/vehicles/VIN', vehicle_data, {'softwareVersion'})
         return vehicle
 
-    def fetch_driving_range(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+    def fetch_driving_range(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
         """
         Fetches the driving range data for a given Skoda vehicle and updates the vehicle object accordingly.
 
@@ -605,7 +605,7 @@ class Connector(BaseConnector):
         if vin is None:
             raise APIError('VIN is missing')
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}/driving-range'
-        range_data: Dict[str, Any] | None = self._fetch_data(url, self.session)
+        range_data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if range_data:
             captured_at: datetime = robust_time_parse(range_data['carCapturedTimestamp'])
             # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
@@ -692,7 +692,7 @@ class Connector(BaseConnector):
                                                                                                'secondaryEngineRange'})
         return vehicle
 
-    def fetch_vehicle_status_second_api(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+    def fetch_vehicle_status_second_api(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
         """
         Fetches the status of a vehicle from other Skoda API.
 
@@ -706,7 +706,7 @@ class Connector(BaseConnector):
         if vin is None:
             raise APIError('VIN is missing')
         url = f'https://api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}'
-        vehicle_status_data: Dict[str, Any] | None = self._fetch_data(url, self.session)
+        vehicle_status_data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if vehicle_status_data:
             if 'remote' in vehicle_status_data and vehicle_status_data['remote'] is not None:
                 vehicle_status_data = vehicle_status_data['remote']
@@ -881,10 +881,11 @@ class Connector(BaseConnector):
         """
         self._elapsed.append(elapsed)
 
-    def _fetch_data(self, url, session, force=False, allow_empty=False, allow_http_error=False, allowed_errors=None) -> Optional[Dict[str, Any]]:  # noqa: C901
+    def _fetch_data(self, url, session, no_cache=False, allow_empty=False, allow_http_error=False,
+                    allowed_errors=None) -> Optional[Dict[str, Any]]:  # noqa: C901
         data: Optional[Dict[str, Any]] = None
         cache_date: Optional[datetime] = None
-        if not force and (self.max_age is not None and session.cache is not None and url in session.cache):
+        if not no_cache and (self.max_age is not None and session.cache is not None and url in session.cache):
             data, cache_date_string = session.cache[url]
             cache_date = datetime.fromisoformat(cache_date_string)
         if data is None or self.max_age is None \

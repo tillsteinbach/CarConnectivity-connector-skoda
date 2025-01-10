@@ -546,14 +546,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                             self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
                                         except CarConnectivityError as e:
                                             LOG.error('Error while fetching air conditioning: %s', e)
-                                    try:
-                                        self._skoda_connector.fetch_vehicle_status_second_api(vehicle, no_cache=True)
-                                    except CarConnectivityError as e:
-                                        LOG.error('Error while fetching status second API: %s', e)
-                                    try:
-                                        self._skoda_connector.fetch_driving_range(vehicle, no_cache=True)
-                                    except CarConnectivityError as e:
-                                        LOG.error('Error while fetching driving range: %s', e)
+                                    #try:
+                                    #    self._skoda_connector.fetch_vehicle_status_second_api(vehicle, no_cache=True)
+                                    #except CarConnectivityError as e:
+                                    #    LOG.error('Error while fetching status second API: %s', e)
 
                                 if vin in self.delayed_access_function_timers:
                                     self.delayed_access_function_timers[vin].cancel()

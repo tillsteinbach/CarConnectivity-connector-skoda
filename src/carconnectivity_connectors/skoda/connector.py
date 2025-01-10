@@ -128,6 +128,8 @@ class Connector(BaseConnector):
         if not isinstance(session, MySkodaSession):
             raise AuthenticationError('Could not create session')
         self.session: MySkodaSession = session
+        self.session.retries = 3
+        self.session.timeout = 180
         self.session.refresh()
 
         self._elapsed: List[timedelta] = []

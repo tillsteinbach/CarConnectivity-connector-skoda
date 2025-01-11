@@ -23,6 +23,7 @@ from carconnectivity.attributes import BooleanAttribute, DurationAttribute
 from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
+from carconnectivity.charging_connector import ChargingConnector
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -527,8 +528,42 @@ class Connector(BaseConnector):
                 log_extra_keys(LOG_API, 'targetTemperature', data['outsideTemperature'],  {'carCapturedTimestamp', 'temperatureUnit', 'temperatureValue'})
             else:
                 vehicle.outside_temperature._set_value(value=None, measured=None, unit=Temperature.UNKNOWN)  # pylint: disable=protected-access
+            if isinstance(vehicle, SkodaElectricVehicle):
+                if 'chargerConnectionState' in data and data['chargerConnectionState'] is not None \
+                        and vehicle.charging is not None and vehicle.charging.connector is not None:
+                    if data['chargerConnectionState'] in [item.name for item in ChargingConnector.ChargingConnectorConnectionState]:
+                        charging_connector_state: ChargingConnector.ChargingConnectorConnectionState = \
+                            ChargingConnector.ChargingConnectorConnectionState[data['chargerConnectionState']]
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.connector.connection_state._set_value(value=charging_connector_state, measured=captured_at)
+                    else:
+                        LOG_API.info('Unkown connector state %s not in %s', data['chargerConnectionState'],
+                                     str(ChargingConnector.ChargingConnectorConnectionState))
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.connector.connection_state._set_value(value=SkodaCharging.SkodaChargingState.UNKNOWN, measured=captured_at)
+                else:
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.connector.connection_state._set_value(value=None, measured=captured_at)
+                if 'chargerLockState' in data and data['chargerLockState'] is not None \
+                        and vehicle.charging is not None and vehicle.charging.connector is not None:
+                    if data['chargerLockState'] in [item.name for item in ChargingConnector.ChargingConnectorLockState]:
+                        charging_connector_lockstate: ChargingConnector.ChargingConnectorLockState = \
+                            ChargingConnector.ChargingConnectorLockState[data['chargerLockState']]
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.connector.lock_state._set_value(value=charging_connector_lockstate, measured=captured_at)
+                    else:
+                        LOG_API.info('Unkown connector lock state %s not in %s', data['chargerLockState'],
+                                     str(ChargingConnector.ChargingConnectorLockState))
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.connector.lock_state._set_value(value=SkodaCharging.SkodaChargingState.UNKNOWN, measured=captured_at)
+                else:
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.connector.lock_state._set_value(value=None, measured=captured_at)
+            if 'windowHeatingState' in data and data['windowHeatingState'] is not None:
+                pass
             log_extra_keys(LOG_API, 'air-condition', data,  {'carCapturedTimestamp', 'state', 'estimatedDateTimeToReachTargetTemperature'
-                                                             'targetTemperature', 'outsideTemperature'})
+                                                             'targetTemperature', 'outsideTemperature', 'chargerConnectionState',
+                                                             'chargerLockState'})
         return vehicle
 
     def fetch_vehicle_details(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

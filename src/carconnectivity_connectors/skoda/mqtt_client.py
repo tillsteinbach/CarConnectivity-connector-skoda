@@ -20,6 +20,7 @@ from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.drive import ElectricDrive
 from carconnectivity.util import robust_time_parse, log_extra_keys
 from carconnectivity.charging import Charging
+from carconnectivity.climatization import Climatization
 
 from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
@@ -514,6 +515,14 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching charging: %s', e)
+                    elif 'name' in data and data['name'] == 'climatisation-completed':
+                        if 'data' in data and data['data'] is not None:
+                            vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                            if vehicle is not None and vehicle.climatization is not None:
+                                # pylint: disable-next=protected-access
+                                vehicle.climatization.state._set_value(value=Climatization.ClimatizationState.OFF, measured=measured_at)
+                                # pylint: disable-next=protected-access
+                                vehicle.climatization.estimated_date_reached._set_value(value=measured_at, measured=measured_at)
                     LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
                                  service_event, vin, user_id, msg.payload)
                     return
@@ -546,10 +555,6 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                             self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
                                         except CarConnectivityError as e:
                                             LOG.error('Error while fetching air conditioning: %s', e)
-                                    #try:
-                                    #    self._skoda_connector.fetch_vehicle_status_second_api(vehicle, no_cache=True)
-                                    #except CarConnectivityError as e:
-                                    #    LOG.error('Error while fetching status second API: %s', e)
 
                                 if vin in self.delayed_access_function_timers:
                                     self.delayed_access_function_timers[vin].cancel()

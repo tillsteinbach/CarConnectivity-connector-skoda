@@ -1,4 +1,4 @@
-"""Module implements the connector to interact with the Skoda API."""
+"""Module implements the connector to interact with the Skoda API."""  # pylint: disable=too-many-lines
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
@@ -371,10 +371,39 @@ class Connector(BaseConnector):
                     vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached, measured=captured_at)
                 else:
                     vehicle.charging.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                if 'chargeType' in data['status'] and data['status']['chargeType'] is not None:
+                    if data['status']['chargeType'] in [item.name for item in Charging.ChargingType]:
+                        charge_type: Charging.ChargingType = Charging.ChargingType[data['status']['chargeType']]
+                    else:
+                        LOG_API.info('Unknown charge type %s not in %s', data['status']['chargeType'], str(Charging.ChargingType))
+                        charge_type = Charging.ChargingType.UNKNOWN
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.type._set_value(value=charge_type, measured=captured_at)
+                else:
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.type._set_value(None, measured=captured_at)
+                if 'battery' in data['status'] and data['status']['battery'] is not None:
+                    for drive in vehicle.drives.drives.values():
+                        # Assume first electric drive is the right one
+                        if isinstance(drive, ElectricDrive):
+                            if 'remainingCruisingRangeInMeters' in data['status']['battery'] \
+                                    and data['status']['battery']['remainingCruisingRangeInMeters'] is not None:
+                                cruising_range_in_km: float = data['status']['battery']['remainingCruisingRangeInMeters'] / 1000
+                                # pylint: disable-next=protected-access
+                                drive.range._set_value(value=cruising_range_in_km, measured=captured_at, unit=Length.KM)
+                            if 'stateOfChargeInPercent' in data['status']['battery'] \
+                                    and data['status']['battery']['stateOfChargeInPercent'] is not None:
+                                # pylint: disable-next=protected-access
+                                drive.level._set_value(value=data['status']['battery']['stateOfChargeInPercent'], measured=captured_at)
+                            log_extra_keys(LOG_API, 'status', data['status']['battery'],  {'remainingCruisingRangeInMeters',
+                                                                                           'stateOfChargeInPercent'})
+                            break
                 log_extra_keys(LOG_API, 'status', data['status'],  {'chargingRateInKilometersPerHour',
                                                                     'chargePowerInKw',
                                                                     'remainingTimeToFullyChargedInMinutes',
-                                                                    'state'})
+                                                                    'state',
+                                                                    'chargeType',
+                                                                    'battery'})
             log_extra_keys(LOG_API, 'charging data', data,  {'carCapturedTimestamp', 'status'})
         return vehicle
 

@@ -180,6 +180,9 @@ class Connector(BaseConnector):
             except RetrievalError as err:
                 LOG.error('Retrieval error during update (%s). Will try again after configured interval of %ss', str(err), interval)
                 self._stop_event.wait(interval)
+            except APIError as err:
+                LOG.error('API error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self._stop_event.wait(interval)
             except APICompatibilityError as err:
                 LOG.error('API compatability error during update (%s). Will try again after configured interval of %ss', str(err), interval)
                 self._stop_event.wait(interval)

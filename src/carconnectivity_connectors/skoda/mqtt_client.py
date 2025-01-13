@@ -21,6 +21,7 @@ from carconnectivity.drive import ElectricDrive
 from carconnectivity.util import robust_time_parse, log_extra_keys
 from carconnectivity.charging import Charging
 from carconnectivity.climatization import Climatization
+from carconnectivity.units import Speed, Power
 
 from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
@@ -474,9 +475,9 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                             # pylint: disable-next=protected-access
                                             vehicle.charging.type._set_value(value=Charging.ChargingType.OFF, measured=measured_at)
                                             # pylint: disable-next=protected-access
-                                            vehicle.charging.rate._set_value(value=0, measured=measured_at)
+                                            vehicle.charging.rate._set_value(value=0, measured=measured_at, unit=Speed.KMH)
                                             # pylint: disable-next=protected-access
-                                            vehicle.charging.power._set_value(value=0, measured=measured_at)
+                                            vehicle.charging.power._set_value(value=0, measured=measured_at, unit=Power.KW)
                                     if 'soc' in data['data'] and data['data']['soc'] is not None:
                                         electric_drive.level._set_value(measured=measured_at, value=data['data']['soc'])  # pylint: disable=protected-access
                                     if 'chargedRange' in data['data'] and data['data']['chargedRange'] is not None:

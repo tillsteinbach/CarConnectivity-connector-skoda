@@ -28,10 +28,17 @@ from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_sko
 
 
 if TYPE_CHECKING:
-    from typing import Set, Dict, Any, Optional
+    from typing import Set, Dict, Any, Optional, List
     from datetime import datetime
 
+    from paho.mqtt.client import MQTTMessage, DisconnectFlags, ConnectFlags
+    from paho.mqtt.reasoncodes import ReasonCode
+    from paho.mqtt.properties import Properties
+
+    from carconnectivity.attributes import GenericAttribute
+
     from carconnectivity_connectors.skoda.connector import Connector
+
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
@@ -73,7 +80,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         """
         return super().connect(*args, host='mqtt.messagehub.de', port=8883, keepalive=60, **kwargs)
 
-    def _on_pre_connect_callback(self, client, userdata) -> None:
+    def _on_pre_connect_callback(self, client: Client, userdata: Any) -> None:
         """
         Callback function that is called before the MQTT client connects to the broker.
 
@@ -95,7 +102,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             # pylint: disable-next=attribute-defined-outside-init # this is a false positive, password has a setter in super class
             self._password = self._skoda_connector.session.access_token  # This is a bit hacky but if password attribute is used here there is an Exception
 
-    def _on_carconnectivity_vehicle_enabled(self, element, flags):
+    def _on_carconnectivity_vehicle_enabled(self, element: GenericAttribute, flags: Observable.ObserverEvent) -> None:
         """
         Handles the event when a vehicle is enabled or disabled in the car connectivity system.
 
@@ -253,7 +260,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                 self.subscribed_topics.remove(topic)
                 LOG.debug('Unsubscribed from topic %s', topic)
 
-    def _on_connect_callback(self, mqttc, obj, flags, reason_code, properties) -> None:
+    def _on_connect_callback(self, client: Client, obj: Any, flags: ConnectFlags, reason_code: ReasonCode, properties: Optional[Properties]) -> None:
         """
         Callback function that is called when the MQTT client connects to the broker.
 
@@ -294,7 +301,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             - 159: Connection rate exceeded.
             - Other: Generic connection error.
         """
-        del mqttc  # unused
+        del client  # unused
         del obj  # unused
         del flags  # unused
         del properties
@@ -352,8 +359,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         else:
             LOG.error('Could not connect (%s)', reason_code)
 
-    def _on_disconnect_callback(self, client, userdata, flags, reason_code, properties) -> None:
-        """
+    def _on_disconnect_callback(self, client: Client, userdata, flags: DisconnectFlags, reason_code: ReasonCode, properties: Optional[Properties]) -> None:
+        """["Client", Any, DisconnectFlags, ReasonCode, Union[Properties, None]
         Callback function that is called when the MQTT client disconnects.
 
         This function handles the disconnection of the MQTT client and logs the appropriate
@@ -392,9 +399,9 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         elif reason_code == 160:
             LOG.error('Client disconnected: Maximum connect time')
         else:
-            LOG.error('Client unexpectedly disconnected (%d: %s), trying to reconnect', reason_code, reason_code)
+            LOG.error('Client unexpectedly disconnected (%d: %s), trying to reconnect', reason_code.value, reason_code.getName())
 
-    def _on_subscribe_callback(self, mqttc, obj, mid, reason_codes, properties) -> None:
+    def _on_subscribe_callback(self, client: Client, obj: Any, mid: int, reason_codes: List[ReasonCode], properties: Optional[Properties]) -> None:
         """
         Callback function for MQTT subscription.
 
@@ -411,15 +418,15 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         Returns:
             None
         """
-        del mqttc  # unused
+        del client  # unused
         del obj  # unused
         del properties  # unused
         if any(x in [0, 1, 2] for x in reason_codes):
             LOG.debug('sucessfully subscribed to topic of mid %d', mid)
         else:
-            LOG.error('Subscribe was not successfull (%s)', ', '.join(reason_codes))
+            LOG.error('Subscribe was not successfull (%s)', ', '.join([reason_code.getName() for reason_code in reason_codes]))
 
-    def _on_message_callback(self, mqttc, obj, msg) -> None:  # noqa: C901
+    def _on_message_callback(self, client: Client, obj: Any, msg: MQTTMessage) -> None:  # noqa: C901
         """
         Callback function for handling incoming MQTT messages.
 
@@ -435,7 +442,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         Returns:
             None
         """
-        del mqttc  # unused
+        del client  # unused
         del obj  # unused
         if len(msg.payload) == 0:
             LOG_API.debug('MQTT topic %s: ignoring empty message', msg.topic)

@@ -31,11 +31,12 @@ from carconnectivity_connectors.skoda.auth.my_skoda_session import MySkodaSessio
 from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle
 from carconnectivity_connectors.skoda.capability import Capability
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
+from carconnectivity_connectors.skoda.error import Error
 from carconnectivity_connectors.skoda._version import __version__
 from carconnectivity_connectors.skoda.mqtt_client import SkodaMQTTClient
 
 if TYPE_CHECKING:
-    from typing import Dict, List, Optional, Any
+    from typing import Dict, List, Optional, Any, Set
 
     from carconnectivity.carconnectivity import CarConnectivity
 
@@ -340,6 +341,12 @@ class Connector(BaseConnector):
                 captured_at: datetime = robust_time_parse(data['carCapturedTimestamp'])
             else:
                 raise APIError('Could not fetch charging, carCapturedTimestamp missing')
+            if 'isVehicleInSavedLocation' in data and data['isVehicleInSavedLocation'] is not None:
+                if vehicle.charging is not None:
+                    if not isinstance(vehicle.charging, SkodaCharging):
+                        vehicle.charging = SkodaCharging(origin=vehicle.charging)
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.is_in_saved_location._set_value(data['isVehicleInSavedLocation'], measured=captured_at)
             if 'status' in data and data['status'] is not None:
                 if 'state' in data['status'] and data['status']['state'] is not None:
                     if data['status']['state'] in [item.name for item in SkodaCharging.SkodaChargingState]:
@@ -404,7 +411,114 @@ class Connector(BaseConnector):
                                                                     'state',
                                                                     'chargeType',
                                                                     'battery'})
-            log_extra_keys(LOG_API, 'charging data', data,  {'carCapturedTimestamp', 'status'})
+            if 'settings' in data and data['settings'] is not None:
+                if 'targetStateOfChargeInPercent' in data['settings'] and data['settings']['targetStateOfChargeInPercent'] is not None \
+                        and vehicle.charging is not None and vehicle.charging.settings is not None:
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.settings.target_level._set_value(value=data['settings']['targetStateOfChargeInPercent'], measured=captured_at)
+                else:
+                    vehicle.charging.settings.target_level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                if 'maxChargeCurrentAc' in data['settings'] and data['settings']['maxChargeCurrentAc'] is not None \
+                        and vehicle.charging is not None and vehicle.charging.settings is not None:
+                    if data['settings']['maxChargeCurrentAc'] == 'MAXIMUM':
+                        vehicle.charging.settings.maximum_current._set_value(value=11, measured=captured_at)  # pylint: disable=protected-access
+                    elif data['settings']['maxChargeCurrentAc'] == 'REDUCED':
+                        vehicle.charging.settings.maximum_current._set_value(value=6, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        LOG_API.info('Unknown maxChargeCurrentAc %s not in %s', data['settings']['maxChargeCurrentAc'], ['MAXIMUM', 'REDUCED'])
+                        vehicle.charging.settings.maximum_current._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                else:
+                    vehicle.charging.settings.maximum_current._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                if 'autoUnlockPlugWhenCharged' in data['settings'] and data['settings']['autoUnlockPlugWhenCharged'] is not None:
+                    if data['settings']['autoUnlockPlugWhenCharged'] in ['ON', 'PERMANENT']:
+                        vehicle.charging.settings.auto_unlock._set_value(True, measured=captured_at)  # pylint: disable=protected-access
+                    elif data['settings']['autoUnlockPlugWhenCharged'] == 'OFF':
+                        vehicle.charging.settings.auto_unlock._set_value(False, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        LOG_API.info('Unknown autoUnlockPlugWhenCharged %s not in %s', data['settings']['autoUnlockPlugWhenCharged'],
+                                     ['ON', 'PERMANENT', 'OFF'])
+                        vehicle.charging.settings.auto_unlock._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                if 'preferredChargeMode' in data['settings'] and data['settings']['preferredChargeMode'] is not None:
+                    if not isinstance(vehicle.charging, SkodaCharging):
+                        vehicle.charging = SkodaCharging(origin=vehicle.charging)
+                    if data['settings']['preferredChargeMode'] in [item.name for item in SkodaCharging.SkodaChargeMode]:
+                        preferred_charge_mode: SkodaCharging.SkodaChargeMode = SkodaCharging.SkodaChargeMode[data['settings']['preferredChargeMode']]
+                    else:
+                        LOG_API.info('Unkown charge mode %s not in %s', data['settings']['preferredChargeMode'], str(SkodaCharging.SkodaChargeMode))
+                        preferred_charge_mode = SkodaCharging.SkodaChargeMode.UNKNOWN
+
+                    if isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.settings.preferred_charge_mode._set_value(value=preferred_charge_mode, measured=captured_at)
+                else:
+                    if vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                        vehicle.charging.settings.preferred_charge_mode._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                if 'availableChargeModes' in data['settings'] and data['settings']['availableChargeModes'] is not None:
+                    if not isinstance(vehicle.charging, SkodaCharging):
+                        vehicle.charging = SkodaCharging(origin=vehicle.charging)
+                    available_charge_modes: list[str] = data['settings']['availableChargeModes']
+                    if vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.settings.available_charge_modes._set_value('.'.join(available_charge_modes), measured=captured_at)
+                else:
+                    if vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                        vehicle.charging.settings.available_charge_modes._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                if 'chargingCareMode' in data['settings'] and data['settings']['chargingCareMode'] is not None:
+                    if not isinstance(vehicle.charging, SkodaCharging):
+                        vehicle.charging = SkodaCharging(origin=vehicle.charging)
+                    if data['settings']['chargingCareMode'] in [item.name for item in SkodaCharging.SkodaChargingCareMode]:
+                        charge_mode: SkodaCharging.SkodaChargingCareMode = SkodaCharging.SkodaChargingCareMode[data['settings']['chargingCareMode']]
+                    else:
+                        LOG_API.info('Unknown charging care mode %s not in %s', data['settings']['chargingCareMode'], str(SkodaCharging.SkodaChargingCareMode))
+                        charge_mode = SkodaCharging.SkodaChargingCareMode.UNKNOWN
+                    if vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.settings.charging_care_mode._set_value(value=charge_mode, measured=captured_at)
+                else:
+                    if vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                        vehicle.charging.settings.charging_care_mode._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                if 'batterySupport' in data['settings'] and data['settings']['batterySupport'] is not None:
+                    if not isinstance(vehicle.charging, SkodaCharging):
+                        vehicle.charging = SkodaCharging(origin=vehicle.charging)
+                    if data['settings']['batterySupport'] in [item.name for item in SkodaCharging.SkodaBatterySupport]:
+                        battery_support: SkodaCharging.SkodaBatterySupport = SkodaCharging.SkodaBatterySupport[data['settings']['batterySupport']]
+                    else:
+                        LOG_API.info('Unknown battery support %s not in %s', data['settings']['batterySupport'], str(SkodaCharging.SkodaBatterySupport))
+                        battery_support = SkodaCharging.SkodaBatterySupport.UNKNOWN
+                    if vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.settings.battery_support._set_value(value=battery_support, measured=captured_at)
+                else:
+                    if vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                        vehicle.charging.settings.battery_support._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                log_extra_keys(LOG_API, 'settings', data['settings'],  {'targetStateOfChargeInPercent', 'maxChargeCurrentAc', 'autoUnlockPlugWhenCharged',
+                                                                        'preferredChargeMode', 'availableChargeModes', 'chargingCareMode', 'batterySupport'})
+            if 'errors' in data and data['errors'] is not None:
+                found_errors: Set[str] = set()
+                if not isinstance(vehicle.charging, SkodaCharging):
+                    vehicle.charging = SkodaCharging(origin=vehicle.charging)
+                for error_dict in data['errors']:
+                    if 'type' in error_dict and error_dict['type'] is not None:
+                        if error_dict['type'] not in vehicle.charging.errors:
+                            error: Error = Error(object_id=error_dict['type'])
+                        else:
+                            error = vehicle.charging.errors[error_dict['type']]
+                        if error_dict['type'] in [item.name for item in Error.ChargingError]:
+                            error_type: Error.ChargingError = Error.ChargingError[error_dict['type']]
+                        else:
+                            LOG_API.info('Unknown charging error type %s not in %s', error_dict['type'], str(Error.ChargingError))
+                            error_type = Error.ChargingError.UNKNOWN
+                        error.type._set_value(error_type, measured=captured_at)  # pylint: disable=protected-access
+                        if 'description' in error_dict and error_dict['description'] is not None:
+                            error.description._set_value(error_dict['description'], measured=captured_at)  # pylint: disable=protected-access
+                    log_extra_keys(LOG_API, 'errors', error_dict,  {'type', 'description'})
+                if vehicle.charging is not None and vehicle.charging.errors is not None and len(vehicle.charging.errors) > 0:
+                    for error_id in vehicle.charging.errors.keys()-found_errors:
+                        vehicle.charging.errors.pop(error_id)
+            else:
+                if isinstance(vehicle.charging, SkodaCharging):
+                    vehicle.charging.errors.clear()
+            log_extra_keys(LOG_API, 'charging data', data,  {'carCapturedTimestamp', 'status', 'isVehicleInSavedLocation', 'errors', 'settings'})
         return vehicle
 
     def fetch_position(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

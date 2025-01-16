@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionVehicle, HybridVehicle
+from carconnectivity.charging import Charging
 
 from carconnectivity_connectors.skoda.capability import Capabilities
+from carconnectivity_connectors.skoda.charging import SkodaCharging
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -39,8 +41,12 @@ class SkodaElectricVehicle(ElectricVehicle, SkodaVehicle):
                  origin: Optional[SkodaVehicle] = None) -> None:
         if origin is not None:
             super().__init__(origin=origin)
+            if isinstance(origin, ElectricVehicle):
+                self.charging: Charging = SkodaCharging(origin=origin.charging)
+                self.charging.parent = self
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
+            self.charging: Charging = SkodaCharging(vehicle=self)
 
 
 class SkodaCombustionVehicle(CombustionVehicle, SkodaVehicle):

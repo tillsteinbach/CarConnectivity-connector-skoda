@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     from carconnectivity_connectors.skoda.connector import Connector
 
 
-
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
 LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda-api-debug")
 
@@ -582,8 +581,15 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             operation_request: str = match.group('operation_request')
             data: Dict[str, Any] = json.loads(msg.payload)
             if data is not None:
-                if operation_request == 'air-conditioning/start-stop-air-conditioning':
-                    vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                if operation_request == 'air-conditioning/set-air-conditioning-at-unlock' \
+                        or operation_request == 'air-conditioning/set-air-conditioning-seats-heating' \
+                        or operation_request == 'air-conditioning/set-air-conditioning-timers' \
+                        or operation_request == 'air-conditioning/set-air-conditioning-without-external-power' \
+                        or operation_request == 'air-conditioning/set-target-temperature' \
+                        or operation_request == 'air-conditioning/start-stop-air-conditioning' \
+                        or operation_request == 'air-conditioning/start-stop-window-heating' \
+                        or operation_request == 'air-conditioning/windows-heating':
                     if isinstance(vehicle, SkodaVehicle):
                         if 'status' in data and data['status'] is not None:
                             if data['status'] == 'COMPLETED_SUCCESS':
@@ -593,6 +599,23 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching air-conditioning: %s', e)
                                 return
-                    LOG_API.info('Received unknown operation request %s for vehicle %s from user %s: %s', operation_request, vin, user_id, msg.payload)
-                    return
+                if operation_request == 'charging/start-stop-charging' \
+                        or operation_request == 'charging/update-battery-support' \
+                        or operation_request == 'charging/update-auto-unlock-plug' \
+                        or operation_request == 'charging/update-care-mode' \
+                        or operation_request == 'charging/update-charge-limit' \
+                        or operation_request == 'charging/update-charge-mode' \
+                        or operation_request == 'charging/update-charging-profiles' \
+                        or operation_request == 'charging/update-charging-current':
+                    if isinstance(vehicle, SkodaElectricVehicle):
+                        if 'status' in data and data['status'] is not None:
+                            if data['status'] == 'COMPLETED_SUCCESS':
+                                LOG.debug('Received %s operation request for vehicle %s from user %s', operation_request, vin, user_id)
+                                try:
+                                    self._skoda_connector.fetch_charging(vehicle, no_cache=True)
+                                except CarConnectivityError as e:
+                                    LOG.error('Error while fetching charging: %s', e)
+                                return
+                LOG_API.info('Received unknown operation request %s for vehicle %s from user %s: %s', operation_request, vin, user_id, msg.payload)
+                return
         LOG_API.info('I don\'t understand message %s: %s', msg.topic, msg.payload)

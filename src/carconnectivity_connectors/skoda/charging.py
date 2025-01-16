@@ -7,18 +7,47 @@ from typing import TYPE_CHECKING
 from enum import Enum
 
 from carconnectivity.charging import Charging
+from carconnectivity.objects import GenericObject
+from carconnectivity.vehicle import ElectricVehicle
+from carconnectivity.attributes import BooleanAttribute, EnumAttribute, StringAttribute
+
+from carconnectivity_connectors.skoda.error import Error
 
 if TYPE_CHECKING:
-    from typing import Dict
+    from typing import Optional, Dict
 
 
 class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
     """
     SkodaCharging class for handling Skoda vehicle charging information.
 
-    This class extends the Charging class and includes an enumeration of various 
+    This class extends the Charging class and includes an enumeration of various
     charging states specific to Skoda vehicles.
     """
+    def __init__(self, vehicle: ElectricVehicle | None = None, origin: Optional[Charging] = None) -> None:
+        if origin is not None:
+            super().__init__(origin=origin)
+            self.settings: Charging.Settings = SkodaCharging.Settings(origin=origin.settings)
+        else:
+            super().__init__(vehicle=vehicle)
+            self.settings: Charging.Settings = SkodaCharging.Settings(origin=self.settings)
+        self.errors: Dict[str, Error] = {}
+        self.is_in_saved_location: BooleanAttribute = BooleanAttribute("is_in_saved_location", parent=self)
+
+    class Settings(Charging.Settings):
+        """
+        This class represents the settings for a skoda car charging.
+        """
+        def __init__(self, parent: Optional[GenericObject] = None, origin: Optional[Charging.Settings] = None) -> None:
+            if origin is not None:
+                super().__init__(origin=origin)
+            else:
+                super().__init__(parent=parent)
+            self.preferred_charge_mode: EnumAttribute = EnumAttribute("preferred_charge_mode", parent=self)
+            self.available_charge_modes: StringAttribute = StringAttribute("available_charge_modes", parent=self)
+            self.charging_care_mode: EnumAttribute = EnumAttribute("charging_care_mode", parent=self)
+            self.battery_support: EnumAttribute = EnumAttribute("battery_support", parent=self)
+
     class SkodaChargingState(Enum,):
         """
         Enum representing the various charging states for a Skoda vehicle.
@@ -48,6 +77,47 @@ class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
         UNSUPPORTED = 'unsupported'
         DISCHARGING = 'discharging'
         UNKNOWN = 'unknown charging state'
+
+    class SkodaChargeMode(Enum,):
+        """
+        Enum class representing different Skoda charge modes.
+
+        Attributes:
+            HOME_STORAGE_CHARGING (str): Charge mode for home storage charging.
+            IMMEDIATE_DISCHARGING (str): Charge mode for immediate discharging.
+            ONLY_OWN_CURRENT (str): Charge mode for using only own current.
+            PREFERRED_CHARGING_TIMES (str): Charge mode for preferred charging times.
+            TIMER_CHARGING_WITH_CLIMATISATION (str): Charge mode for timer charging with climatisation.
+            TIMER (str): Charge mode for timer-based charging.
+            MANUAL (str): Charge mode for manual charging.
+            OFF (str): Charge mode for turning off charging.
+        """
+        HOME_STORAGE_CHARGING = 'HOME_STORAGE_CHARGING'
+        IMMEDIATE_DISCHARGING = 'IMMEDIATE_DISCHARGING'
+        ONLY_OWN_CURRENT = 'ONLY_OWN_CURRENT'
+        PREFERRED_CHARGING_TIMES = 'PREFERRED_CHARGING_TIMES'
+        TIMER_CHARGING_WITH_CLIMATISATION = 'TIMER_CHARGING_WITH_CLIMATISATION'
+        TIMER = 'TIMER'
+        MANUAL = 'MANUAL'
+        OFF = 'OFF'
+        UNKNOWN = 'unknown charge mode'
+
+    class SkodaChargingCareMode(Enum,):
+        """
+        Enum representing the charging care mode for Skoda vehicles.
+        """
+        ACTIVATED = 'ACTIVATED'
+        DEACTIVATED = 'DEACTIVATED'
+        UNKNOWN = 'UNKNOWN'
+
+    class SkodaBatterySupport(Enum,):
+        """
+        SkodaBatterySupport is an enumeration that represents the different states of battery support for Skoda vehicles.
+        """
+        ENABLED = 'ENABLED'
+        DISABLED = 'DISABLED'
+        NOT_ALLOWED = 'NOT_ALLOWED'
+        UNKNOWN = 'UNKNOWN'
 
 
 # Mapping of Skoda charging states to generic charging states

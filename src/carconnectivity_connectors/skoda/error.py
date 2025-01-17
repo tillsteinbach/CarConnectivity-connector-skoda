@@ -40,3 +40,13 @@ class Error(GenericObject):
         MAX_CHARGE_CURRENT_IS_NOT_AVAILABLE = 'MAX_CHARGE_CURRENT_IS_NOT_AVAILABLE'
         CHARGE_LIMIT_IS_NOT_AVAILABLE = 'CHARGE_LIMIT_IS_NOT_AVAILABLE'
         UNKNOWN = 'UNKNOWN'
+
+    class ClimatizationError(Enum):
+        """
+        ClimatizationError is an enumeration for representing various errors
+        related to the climatization system in a Skoda car.
+
+        This enum can be extended to include specific error codes and messages
+        that correspond to different climatization issues.
+        """
+        UNKNOWN = 'UNKNOWN'

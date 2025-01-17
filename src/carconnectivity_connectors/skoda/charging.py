@@ -97,9 +97,9 @@ class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
         ONLY_OWN_CURRENT = 'ONLY_OWN_CURRENT'
         PREFERRED_CHARGING_TIMES = 'PREFERRED_CHARGING_TIMES'
         TIMER_CHARGING_WITH_CLIMATISATION = 'TIMER_CHARGING_WITH_CLIMATISATION'
-        TIMER = 'TIMER'
-        MANUAL = 'MANUAL'
-        OFF = 'OFF'
+        TIMER = 'timer'
+        MANUAL = 'manual'
+        OFF = 'off'
         UNKNOWN = 'unknown charge mode'
 
     class SkodaChargingCareMode(Enum,):

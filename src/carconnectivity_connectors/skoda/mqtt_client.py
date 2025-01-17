@@ -468,6 +468,15 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                 if electric_drive is not None:
                                     charging_state: Optional[Charging.ChargingState] = vehicle.charging.state.value
                                     old_charging_state: Optional[Charging.ChargingState] = charging_state
+                                    if 'mode' in data['data'] and data['data']['mode'] is not None \
+                                            and vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                                        if data['data']['mode'] in SkodaCharging.SkodaChargeMode:
+                                            skoda_charging_mode = SkodaCharging.SkodaChargeMode(data['data']['mode'])
+                                        else:
+                                            LOG_API.info('Unkown charging mode %s not in %s', data['data']['mode'], str(SkodaCharging.SkodaChargeMode))
+                                            skoda_charging_mode = Charging.ChargingState.UNKNOWN
+                                        # pylint: disable-next=protected-access
+                                        vehicle.charging.settings.preferred_charge_mode._set_value(value=skoda_charging_mode, measured=measured_at)
                                     if 'state' in data['data'] and data['data']['state'] is not None:
                                         if data['data']['state'] in [item.value for item in SkodaCharging.SkodaChargingState]:
                                             skoda_charging_state = SkodaCharging.SkodaChargingState(data['data']['state'])
@@ -544,6 +553,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     """
                                     vin = vehicle.id
                                     self.delayed_access_function_timers.pop(vin)
+                                    try:
+                                        self._skoda_connector.fetch_vehicle_status(vehicle, no_cache=True)
+                                    except CarConnectivityError as e:
+                                        LOG.error('Error while fetching vehicle status: %s', e)
                                     if vehicle.capabilities is not None and vehicle.capabilities.enabled \
                                             and vehicle.capabilities.has_capability('CHARGING') and isinstance(vehicle, SkodaElectricVehicle):
                                         try:
@@ -567,6 +580,19 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     self.delayed_access_function_timers[vin].cancel()
                                 self.delayed_access_function_timers[vin] = threading.Timer(2.0, delayed_access_function, kwargs={'vehicle': vehicle})
                                 self.delayed_access_function_timers[vin].start()
+
+                    LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
+                                 service_event, vin, user_id, msg.payload)
+                    return
+                elif service_event == 'vehicle-status/lights':
+                    if 'name' in data and data['name'] == 'change-lights':
+                        if 'data' in data and data['data'] is not None:
+                            vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                            if isinstance(vehicle, SkodaVehicle):
+                                try:
+                                    self._skoda_connector.fetch_vehicle_status(vehicle, no_cache=True)
+                                except CarConnectivityError as e:
+                                    LOG.error('Error while fetching vehicle status: %s', e)
 
                     LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
                                  service_event, vin, user_id, msg.payload)

@@ -21,7 +21,7 @@ from carconnectivity.drive import ElectricDrive
 from carconnectivity.util import robust_time_parse, log_extra_keys
 from carconnectivity.charging import Charging
 from carconnectivity.climatization import Climatization
-from carconnectivity.units import Speed, Power
+from carconnectivity.units import Speed, Power, Length
 
 from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
@@ -497,7 +497,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                         electric_drive.level._set_value(measured=measured_at, value=data['data']['soc'])  # pylint: disable=protected-access
                                     if 'chargedRange' in data['data'] and data['data']['chargedRange'] is not None:
                                         # pylint: disable-next=protected-access
-                                        electric_drive.range._set_value(measured=measured_at, value=data['data']['chargedRange'])
+                                        electric_drive.range._set_value(measured=measured_at, value=data['data']['chargedRange'], unit=Length.KM)
                                     # If charging state changed, fetch charging again
                                     if old_charging_state != charging_state:
                                         try:
@@ -514,7 +514,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                         estimated_date_reached: Optional[datetime] = None
                                     # pylint: disable-next=protected-access
                                     vehicle.charging.estimated_date_reached._set_value(measured=measured_at, value=estimated_date_reached)
-                                log_extra_keys(LOG_API, 'data', data['data'],  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish', 'state'})
+                                log_extra_keys(LOG_API, 'data', data['data'],  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish', 'state', 'mode'})
                                 LOG.debug('Received %s event for vehicle %s from user %s', data['name'], vin, user_id)
                                 return
                             else:
@@ -599,7 +599,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                     return
             LOG_API.info('Received unknown service event %s for vehicle %s from user %s: %s', service_event, vin, user_id, msg.payload)
             return
-        # service_events
+        # operation-requests
         match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/operation-request/(?P<operation_request>[a-zA-Z0-9-_/]+)$', msg.topic)
         if match:
             user_id: str = match.group('user_id')
@@ -624,6 +624,9 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching air-conditioning: %s', e)
+                                return
+                            elif data['status'] == 'IN_PROGRESS':
+                                LOG.debug('Received %s operation request for vehicle %s from user %s', operation_request, vin, user_id)
                                 return
                 if operation_request == 'charging/start-stop-charging' \
                         or operation_request == 'charging/update-battery-support' \

@@ -7,23 +7,27 @@ import os
 import logging
 import netrc
 from datetime import datetime, timedelta, timezone
+import json
+
 import requests
+
 
 from carconnectivity.garage import Garage
 from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
-    TemporaryAuthenticationError, ConfigurationError
+    TemporaryAuthenticationError, ConfigurationError, SetterError
 from carconnectivity.util import robust_time_parse, log_extra_keys, config_remove_credentials
 from carconnectivity.units import Length, Speed, Power, Temperature
 from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
-from carconnectivity.attributes import BooleanAttribute, DurationAttribute
+from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute
 from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
 from carconnectivity.charging_connector import ChargingConnector
+from carconnectivity.command_impl import ClimatizationStartStopCommand
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -37,7 +41,7 @@ from carconnectivity_connectors.skoda._version import __version__
 from carconnectivity_connectors.skoda.mqtt_client import SkodaMQTTClient
 
 if TYPE_CHECKING:
-    from typing import Dict, List, Optional, Any, Set
+    from typing import Dict, List, Optional, Any, Set, Union
 
     from carconnectivity.carconnectivity import CarConnectivity
 
@@ -171,10 +175,10 @@ class Connector(BaseConnector):
                         self.update_vehicles()
                     self.last_update._set_value(value=datetime.now(tz=timezone.utc))  # pylint: disable=protected-access
                     if self.interval.value is not None:
-                        interval: int = self.interval.value.total_seconds()
+                        interval: float = self.interval.value.total_seconds()
                 except Exception:
                     if self.interval.value is not None:
-                        interval: int = self.interval.value.total_seconds()
+                        interval: float = self.interval.value.total_seconds()
                     raise
             except TooManyRequestsError as err:
                 LOG.error('Retrieval error during update. Too many requests from your account (%s). Will try again after 15 minutes', str(err))
@@ -604,6 +608,13 @@ class Connector(BaseConnector):
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}'
         data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if data is not None:
+            if vehicle.climatization is not None and vehicle.climatization.commands is not None \
+                    and not vehicle.climatization.commands.contains_command('start-stop'):
+                start_stop_command = ClimatizationStartStopCommand(parent=vehicle.climatization.commands)
+                start_stop_command._add_on_set_hook(self.__on_air_conditioning_start_stop)  # pylint: disable=protected-access
+                start_stop_command.enabled = True
+                vehicle.climatization.commands.add_command(start_stop_command)
+
             if 'carCapturedTimestamp' in data and data['carCapturedTimestamp'] is not None:
                 captured_at: datetime = robust_time_parse(data['carCapturedTimestamp'])
             else:
@@ -626,6 +637,9 @@ class Connector(BaseConnector):
             else:
                 vehicle.climatization.estimated_date_reached._set_value(value=None, measured=captured_at)  # pylint: disable=protected-access
             if 'targetTemperature' in data and data['targetTemperature'] is not None:
+                # pylint: disable-next=protected-access
+                vehicle.climatization.settings.target_temperature._add_on_set_hook(self.__on_air_conditioning_target_temperature_change)
+                vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
                 unit: Temperature = Temperature.UNKNOWN
                 if 'unitInCar' in data['targetTemperature'] and data['targetTemperature']['unitInCar'] is not None:
                     if data['targetTemperature']['unitInCar'] == 'CELSIUS':
@@ -679,6 +693,9 @@ class Connector(BaseConnector):
                 vehicle.outside_temperature._set_value(value=None, measured=None, unit=Temperature.UNKNOWN)  # pylint: disable=protected-access
             if 'airConditioningAtUnlock' in data and data['airConditioningAtUnlock'] is not None:
                 if vehicle.climatization is not None and vehicle.climatization.settings is not None:
+                    # pylint: disable-next=protected-access
+                    vehicle.climatization.settings.climatization_at_unlock._add_on_set_hook(self.__on_air_conditioning_at_unlock_change)
+                    vehicle.climatization.settings.climatization_at_unlock._is_changeable = True  # pylint: disable=protected-access
                     if data['airConditioningAtUnlock'] is True:
                         # pylint: disable-next=protected-access
                         vehicle.climatization.settings.climatization_at_unlock._set_value(True, measured=captured_at)
@@ -709,6 +726,9 @@ class Connector(BaseConnector):
                     vehicle.specification.steering_wheel_position._set_value(None, measured=captured_at)
             if 'windowHeatingEnabled' in data and data['windowHeatingEnabled'] is not None:
                 if vehicle.climatization is not None and vehicle.climatization.settings is not None:
+                    # pylint: disable-next=protected-access
+                    vehicle.climatization.settings.window_heating._add_on_set_hook(self.__on_air_conditioning_window_heating_change)
+                    vehicle.climatization.settings.window_heating._is_changeable = True  # pylint: disable=protected-access
                     if data['windowHeatingEnabled'] is True:
                         # pylint: disable-next=protected-access
                         vehicle.climatization.settings.window_heating._set_value(True, measured=captured_at)
@@ -1295,3 +1315,125 @@ class Connector(BaseConnector):
 
     def get_version(self) -> str:
         return __version__
+
+    def __on_air_conditioning_target_temperature_change(self, temperature_attribute: TemperatureAttribute, target_temperature: float) -> float:
+        """
+        Callback for the climatization target temperature change.
+
+        Args:
+            temperature_attribute (TemperatureAttribute): The temperature attribute that changed.
+            target_temperature (float): The new target temperature.
+        """
+        if temperature_attribute.parent is None or temperature_attribute.parent.parent is None \
+                or temperature_attribute.parent.parent.parent is None or not isinstance(temperature_attribute.parent.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        vehicle: SkodaVehicle = temperature_attribute.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        setting_dict = {}
+        # Round target temperature to nearest 0.5
+        setting_dict['temperatureValue'] = round(target_temperature * 2) / 2
+        if temperature_attribute.unit == Temperature.C:
+            setting_dict['unitInCar'] = 'CELSIUS'
+        elif temperature_attribute.unit == Temperature.F:
+            setting_dict['unitInCar'] = 'FAHRENHEIT'
+        elif temperature_attribute.unit == Temperature.K:
+            setting_dict['unitInCar'] = 'KELVIN'
+        else:
+            raise SetterError(f'Unknown temperature unit {temperature_attribute.unit}')
+
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/settings/target-temperature'
+        settings_response: requests.Response = self.session.post(url, data=json.dumps(setting_dict), allow_redirects=True)
+        if settings_response.status_code != requests.codes['accepted']:
+            LOG.error('Could not set target temperature (%s)', settings_response.status_code)
+            raise SetterError(f'Could not set value ({settings_response.status_code})')
+        return target_temperature
+
+    def __on_air_conditioning_at_unlock_change(self, at_unlock_attribute: BooleanAttribute, at_unlock_value: bool) -> bool:
+        if at_unlock_attribute.parent is None or at_unlock_attribute.parent.parent is None \
+                or at_unlock_attribute.parent.parent.parent is None or not isinstance(at_unlock_attribute.parent.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        vehicle: SkodaVehicle = at_unlock_attribute.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        setting_dict = {}
+        # Round target temperature to nearest 0.5
+        setting_dict['airConditioningAtUnlockEnabled'] = at_unlock_value
+
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/settings/ac-at-unlock'
+        settings_response: requests.Response = self.session.post(url, data=json.dumps(setting_dict), allow_redirects=True)
+        if settings_response.status_code != requests.codes['accepted']:
+            LOG.error('Could not set air conditioning at unlock (%s)', settings_response.status_code)
+            raise SetterError(f'Could not set value ({settings_response.status_code})')
+        return at_unlock_value
+
+    def __on_air_conditioning_window_heating_change(self, window_heating_attribute: BooleanAttribute, window_heating_value: bool) -> bool:
+        if window_heating_attribute.parent is None or window_heating_attribute.parent.parent is None \
+                or window_heating_attribute.parent.parent.parent is None or not isinstance(window_heating_attribute.parent.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        vehicle: SkodaVehicle = window_heating_attribute.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        setting_dict = {}
+        # Round target temperature to nearest 0.5
+        setting_dict['windowHeatingEnabled'] = window_heating_value
+
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/settings/ac-at-unlock'
+        settings_response: requests.Response = self.session.post(url, data=json.dumps(setting_dict), allow_redirects=True)
+        if settings_response.status_code != requests.codes['accepted']:
+            LOG.error('Could not set air conditioning window heating (%s)', settings_response.status_code)
+            raise SetterError(f'Could not set value ({settings_response.status_code})')
+        return window_heating_value
+
+    def __on_air_conditioning_start_stop(self, start_stop_command: ClimatizationStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if start_stop_command.parent is None or start_stop_command.parent.parent is None \
+                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise SetterError('Command arguments are not a dictionary')
+        vehicle: SkodaVehicle = start_stop_command.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise SetterError('Command argument missing')
+        command_dict = {}
+        if command_arguments['command'] == ClimatizationStartStopCommand.Command.START:
+            command_dict['heaterSource'] = 'ELECTRIC'
+            command_dict['targetTemperature'] = {}
+            if 'target_temperature' in command_arguments:
+                # Round target temperature to nearest 0.5
+                command_dict['targetTemperature']['temperatureValue'] = round(command_arguments['target_temperature'] * 2) / 2
+                if 'target_temperature_unit' in command_arguments:
+                    if not isinstance(command_arguments['target_temperature_unit'], Temperature):
+                        raise SetterError('Temperature unit is not of type Temperature')
+                    if command_arguments['target_temperature_unit'] == Temperature.C:
+                        command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
+                    elif command_arguments['target_temperature_unit'] == Temperature.F:
+                        command_dict['targetTemperature']['unitInCar'] = 'FAHRENHEIT'
+                    elif command_arguments['target_temperature_unit'] == Temperature.K:
+                        command_dict['targetTemperature']['unitInCar'] = 'KELVIN'
+                    else:
+                        raise SetterError(f'Unknown temperature unit {command_arguments['target_temperature_unit']}')
+                else:
+                    command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
+            else:
+                command_dict['targetTemperature']['temperatureValue'] = 25.0
+                command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
+            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/start'
+            print(json.dumps(command_dict))
+            settings_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+        elif command_arguments['command'] == ClimatizationStartStopCommand.Command.STOP:
+            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/stop'
+            settings_response: requests.Response = self.session.post(url, allow_redirects=True)
+        else:
+            raise SetterError(f'Unknown command {command_arguments["command"]}')
+
+        if settings_response.status_code != requests.codes['accepted']:
+            LOG.error('Could not start/stop air conditioning (%s: %s)', settings_response.status_code, settings_response.text)
+            raise SetterError(f'Could not start/stop air conditioning ({settings_response.status_code}: {settings_response.text})')
+        return command_arguments

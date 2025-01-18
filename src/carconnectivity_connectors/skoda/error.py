@@ -49,4 +49,5 @@ class Error(GenericObject):
         This enum can be extended to include specific error codes and messages
         that correspond to different climatization issues.
         """
+        UNAVAILABLE_CHARGING_INFORMATION = 'UNAVAILABLE_CHARGING_INFORMATION'
         UNKNOWN = 'UNKNOWN'

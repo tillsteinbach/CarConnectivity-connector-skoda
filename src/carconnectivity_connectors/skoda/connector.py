@@ -27,7 +27,7 @@ from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
 from carconnectivity.charging_connector import ChargingConnector
-from carconnectivity.command_impl import ClimatizationStartStopCommand
+from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -343,6 +343,10 @@ class Connector(BaseConnector):
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}'
         data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if data is not None:
+            start_stop_command: ChargingStartStopCommand = ChargingStartStopCommand(parent=vehicle.charging.commands)
+            start_stop_command._add_on_set_hook(self.__on_charging_start_stop)  # pylint: disable=protected-access
+            start_stop_command.enabled = True
+            vehicle.charging.commands.add_command(start_stop_command)
             if 'carCapturedTimestamp' in data and data['carCapturedTimestamp'] is not None:
                 captured_at: datetime = robust_time_parse(data['carCapturedTimestamp'])
             else:
@@ -1425,7 +1429,6 @@ class Connector(BaseConnector):
                 command_dict['targetTemperature']['temperatureValue'] = 25.0
                 command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/start'
-            print(json.dumps(command_dict))
             settings_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
         elif command_arguments['command'] == ClimatizationStartStopCommand.Command.STOP:
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/stop'
@@ -1436,4 +1439,31 @@ class Connector(BaseConnector):
         if settings_response.status_code != requests.codes['accepted']:
             LOG.error('Could not start/stop air conditioning (%s: %s)', settings_response.status_code, settings_response.text)
             raise SetterError(f'Could not start/stop air conditioning ({settings_response.status_code}: {settings_response.text})')
+        return command_arguments
+
+    def __on_charging_start_stop(self, start_stop_command: ChargingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if start_stop_command.parent is None or start_stop_command.parent.parent is None \
+                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise SetterError('Command arguments are not a dictionary')
+        vehicle: SkodaVehicle = start_stop_command.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise SetterError('Command argument missing')
+        if command_arguments['command'] == ChargingStartStopCommand.Command.START:
+            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/start'
+            settings_response: requests.Response = self.session.post(url, allow_redirects=True)
+        elif command_arguments['command'] == ChargingStartStopCommand.Command.STOP:
+            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/stop'
+            settings_response: requests.Response = self.session.post(url, allow_redirects=True)
+        else:
+            raise SetterError(f'Unknown command {command_arguments["command"]}')
+
+        if settings_response.status_code != requests.codes['accepted']:
+            LOG.error('Could not start/stop charging (%s: %s)', settings_response.status_code, settings_response.text)
+            raise SetterError(f'Could not start/stop charging ({settings_response.status_code}: {settings_response.text})')
         return command_arguments

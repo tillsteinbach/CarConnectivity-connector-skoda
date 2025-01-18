@@ -628,7 +628,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                             elif data['status'] == 'IN_PROGRESS':
                                 LOG.debug('Received %s operation request for vehicle %s from user %s', operation_request, vin, user_id)
                                 return
-                if operation_request == 'charging/start-stop-charging' \
+                elif operation_request == 'charging/start-stop-charging' \
                         or operation_request == 'charging/update-battery-support' \
                         or operation_request == 'charging/update-auto-unlock-plug' \
                         or operation_request == 'charging/update-care-mode' \
@@ -644,6 +644,9 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     self._skoda_connector.fetch_charging(vehicle, no_cache=True)
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching charging: %s', e)
+                                return
+                            elif data['status'] == 'IN_PROGRESS':
+                                LOG.debug('Received %s operation request for vehicle %s from user %s', operation_request, vin, user_id)
                                 return
                 LOG_API.info('Received unknown operation request %s for vehicle %s from user %s: %s', operation_request, vin, user_id, msg.payload)
                 return

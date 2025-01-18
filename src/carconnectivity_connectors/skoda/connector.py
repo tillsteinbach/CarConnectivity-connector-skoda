@@ -75,20 +75,20 @@ class Connector(BaseConnector):
         # Configure logging
         if 'log_level' in config and config['log_level'] is not None:
             config['log_level'] = config['log_level'].upper()
-            if config['log_level'] in logging.getLevelNamesMapping():
+            if config['log_level'] in logging._nameToLevel:
                 LOG.setLevel(config['log_level'])
                 self.log_level._set_value(config['log_level'])  # pylint: disable=protected-access
                 logging.getLogger('requests').setLevel(config['log_level'])
                 logging.getLogger('urllib3').setLevel(config['log_level'])
                 logging.getLogger('oauthlib').setLevel(config['log_level'])
             else:
-                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging.getLevelNamesMapping().keys())}')
+                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging._nameToLevel.keys())}')
         if 'api_log_level' in config and config['api_log_level'] is not None:
             config['api_log_level'] = config['api_log_level'].upper()
-            if config['api_log_level'] in logging.getLevelNamesMapping():
+            if config['api_log_level'] in logging._nameToLevel:
                 LOG_API.setLevel(config['api_log_level'])
             else:
-                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging.getLevelNamesMapping().keys())}')
+                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging._nameToLevel.keys())}')
         LOG.info("Loading skoda connector with config %s", config_remove_credentials(self.config))
 
         username: Optional[str] = None

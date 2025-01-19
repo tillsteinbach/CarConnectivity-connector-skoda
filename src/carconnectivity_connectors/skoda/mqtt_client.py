@@ -530,7 +530,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                 try:
                                     self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
                                 except CarConnectivityError as e:
-                                    LOG.error('Error while fetching charging: %s', e)
+                                    LOG.error('Error while fetching air conditioning: %s', e)
                     elif 'name' in data and data['name'] == 'climatisation-completed':
                         if 'data' in data and data['data'] is not None:
                             vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)

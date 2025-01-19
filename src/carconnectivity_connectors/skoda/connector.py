@@ -1430,6 +1430,20 @@ class Connector(BaseConnector):
                         raise SetterError(f'Unknown temperature unit {command_arguments['target_temperature_unit']}')
                 else:
                     command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
+            elif start_stop_command.parent is not None and (climatization := start_stop_command.parent.parent) is not None \
+                    and isinstance(climatization, Climatization) and climatization.settings is not None \
+                    and climatization.settings.target_temperature is not None and climatization.settings.target_temperature.enabled \
+                    and climatization.settings.target_temperature.value is not None:  # pylint: disable=too-many-boolean-expressions
+                # Round target temperature to nearest 0.5
+                command_dict['targetTemperature']['temperatureValue'] = round(climatization.settings.target_temperature.value * 2) / 2
+                if climatization.settings.target_temperature.unit == Temperature.C:
+                    command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
+                elif climatization.settings.target_temperature.unit == Temperature.F:
+                    command_dict['targetTemperature']['unitInCar'] = 'FAHRENHEIT'
+                elif climatization.settings.target_temperature.unit == Temperature.K:
+                    command_dict['targetTemperature']['unitInCar'] = 'KELVIN'
+                else:
+                    raise SetterError(f'Unknown temperature unit {climatization.settings.target_temperature.unit}')
             else:
                 command_dict['targetTemperature']['temperatureValue'] = 25.0
                 command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'

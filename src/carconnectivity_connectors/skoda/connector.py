@@ -287,7 +287,12 @@ class Connector(BaseConnector):
                         else:
                             vehicle.license_plate._set_value(None)  # pylint: disable=protected-access
 
-                        log_extra_keys(LOG_API, 'vehicles', vehicle_dict,  {'vin', 'licensePlate'})
+                        if 'name' in vehicle_dict and vehicle_dict['name'] is not None:
+                            vehicle.name._set_value(vehicle_dict['name'])  # pylint: disable=protected-access
+                        else:
+                            vehicle.name._set_value(None)  # pylint: disable=protected-access
+
+                        log_extra_keys(LOG_API, 'vehicles', vehicle_dict,  {'vin', 'licensePlate', 'name'})
 
                         vehicle = self.fetch_vehicle_details(vehicle)
                     else:

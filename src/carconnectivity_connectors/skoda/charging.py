@@ -69,7 +69,7 @@ class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
         CONNECT_CABLE = 'connectCable'
         READY_FOR_CHARGING = 'readyForCharging'
         NOT_READY_FOR_CHARGING = 'notReadyForCharging'
-        CONSERVATION = 'conservation'
+        CONSERVING = 'conserving'
         CHARGE_PURPOSE_REACHED_NOT_CONSERVATION_CHARGING = 'chargePurposeReachedAndNotConservationCharging'
         CHARGE_PURPOSE_REACHED_CONSERVATION = 'chargePurposeReachedAndConservation'
         CHARGING = 'charging'
@@ -126,7 +126,7 @@ mapping_skoda_charging_state: Dict[SkodaCharging.SkodaChargingState, Charging.Ch
     SkodaCharging.SkodaChargingState.CONNECT_CABLE: Charging.ChargingState.OFF,
     SkodaCharging.SkodaChargingState.READY_FOR_CHARGING: Charging.ChargingState.READY_FOR_CHARGING,
     SkodaCharging.SkodaChargingState.NOT_READY_FOR_CHARGING: Charging.ChargingState.OFF,
-    SkodaCharging.SkodaChargingState.CONSERVATION: Charging.ChargingState.CONSERVATION,
+    SkodaCharging.SkodaChargingState.CONSERVING: Charging.ChargingState.CONSERVATION,
     SkodaCharging.SkodaChargingState.CHARGE_PURPOSE_REACHED_NOT_CONSERVATION_CHARGING: Charging.ChargingState.READY_FOR_CHARGING,
     SkodaCharging.SkodaChargingState.CHARGE_PURPOSE_REACHED_CONSERVATION: Charging.ChargingState.CONSERVATION,
     SkodaCharging.SkodaChargingState.CHARGING: Charging.ChargingState.CHARGING,

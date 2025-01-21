@@ -494,6 +494,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                             # pylint: disable-next=protected-access
                                             vehicle.charging.power._set_value(value=0, measured=measured_at, unit=Power.KW)
                                     if 'soc' in data['data'] and data['data']['soc'] is not None:
+                                        if isinstance(data['data']['soc'], str):
+                                            data['data']['soc'] = int(data['data']['soc'])
                                         electric_drive.level._set_value(measured=measured_at, value=data['data']['soc'])  # pylint: disable=protected-access
                                     if 'chargedRange' in data['data'] and data['data']['chargedRange'] is not None:
                                         # pylint: disable-next=protected-access

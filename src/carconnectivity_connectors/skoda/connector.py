@@ -1009,7 +1009,10 @@ class Connector(BaseConnector):
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}'
         vehicle_status_data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if vehicle_status_data:
-            captured_at: datetime = robust_time_parse(vehicle_status_data['carCapturedTimestamp'])
+            if 'carCapturedTimestamp' in vehicle_status_data and vehicle_status_data['carCapturedTimestamp'] is not None:
+                captured_at: Optional[datetime] = robust_time_parse(vehicle_status_data['carCapturedTimestamp'])
+            else:
+                captured_at: Optional[datetime] = None
             if 'overall' in vehicle_status_data and vehicle_status_data['overall'] is not None:
                 if 'doorsLocked' in vehicle_status_data['overall'] and vehicle_status_data['overall']['doorsLocked'] is not None \
                         and vehicle.doors is not None:

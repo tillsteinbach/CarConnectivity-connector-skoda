@@ -27,7 +27,7 @@ from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
 from carconnectivity.charging_connector import ChargingConnector
-from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand
+from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand, HonkAndFlashCommand
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -348,10 +348,11 @@ class Connector(BaseConnector):
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}'
         data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if data is not None:
-            start_stop_command: ChargingStartStopCommand = ChargingStartStopCommand(parent=vehicle.charging.commands)
-            start_stop_command._add_on_set_hook(self.__on_charging_start_stop)  # pylint: disable=protected-access
-            start_stop_command.enabled = True
-            vehicle.charging.commands.add_command(start_stop_command)
+            if not vehicle.climatization.commands.contains_command('start-stop'):
+                start_stop_command: ChargingStartStopCommand = ChargingStartStopCommand(parent=vehicle.charging.commands)
+                start_stop_command._add_on_set_hook(self.__on_charging_start_stop)  # pylint: disable=protected-access
+                start_stop_command.enabled = True
+                vehicle.charging.commands.add_command(start_stop_command)
             if 'carCapturedTimestamp' in data and data['carCapturedTimestamp'] is not None:
                 captured_at: datetime = robust_time_parse(data['carCapturedTimestamp'])
             else:
@@ -871,6 +872,14 @@ class Connector(BaseConnector):
                     vehicle.capabilities.clear_capabilities()
             else:
                 vehicle.capabilities.clear_capabilities()
+
+            # Add HONK_AND_FLASH command if necessary capabilities are available
+            if vehicle.capabilities.has_capability('HONK_AND_FLASH') and vehicle.capabilities.has_capability('PARKING_POSITION'):
+                if vehicle.commands is not None and not vehicle.commands.contains_command('honk-flash'):
+                    honk_flash_command = HonkAndFlashCommand(parent=vehicle.commands)
+                    honk_flash_command._add_on_set_hook(self.__on_honk_flash)  # pylint: disable=protected-access
+                    honk_flash_command.enabled = True
+                    vehicle.commands.add_command(honk_flash_command)
 
             if 'specification' in vehicle_data and vehicle_data['specification'] is not None:
                 if 'model' in vehicle_data['specification'] and vehicle_data['specification']['model'] is not None:
@@ -1488,4 +1497,37 @@ class Connector(BaseConnector):
         if settings_response.status_code != requests.codes['accepted']:
             LOG.error('Could not start/stop charging (%s: %s)', settings_response.status_code, settings_response.text)
             raise SetterError(f'Could not start/stop charging ({settings_response.status_code}: {settings_response.text})')
+        return command_arguments
+
+    def __on_honk_flash(self, honk_flash_command: HonkAndFlashCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if honk_flash_command.parent is None or honk_flash_command.parent.parent is None \
+                or not isinstance(honk_flash_command.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise SetterError('Command arguments are not a dictionary')
+        vehicle: SkodaVehicle = honk_flash_command.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise SetterError('Command argument missing')
+        command_dict = {}
+        if command_arguments['command'] in [HonkAndFlashCommand.Command.FLASH, HonkAndFlashCommand.Command.HONK_AND_FLASH]:
+            command_dict['mode'] = command_arguments['command'].name
+            command_dict['vehiclePosition'] = {}
+            if vehicle.position is None or vehicle.position.latitude is None or vehicle.position.longitude is None \
+                    or vehicle.position.latitude.value is None or vehicle.position.longitude.value is None \
+                    or not vehicle.position.latitude.enabled or not vehicle.position.longitude.enabled:
+                raise SetterError('Can only execute honk and flash commands if vehicle position is known')
+            command_dict['vehiclePosition']['latitude'] = vehicle.position.latitude.value
+            command_dict['vehiclePosition']['longitude'] = vehicle.position.longitude.value
+
+            url = f'https://mysmob.api.connect.skoda-auto.cz/v1/vehicle-access/{vin}/honk-and-flash'
+            settings_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+            if settings_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not execute honk or flash command (%s: %s)', settings_response.status_code, settings_response.text)
+                raise SetterError(f'Could not execute honk or flash command ({settings_response.status_code}: {settings_response.text})')
+        else:
+            raise SetterError(f'Unknown command {command_arguments["command"]}')
         return command_arguments

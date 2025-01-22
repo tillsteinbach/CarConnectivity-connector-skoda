@@ -27,7 +27,7 @@ from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
 from carconnectivity.charging_connector import ChargingConnector
-from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand, HonkAndFlashCommand
+from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand, HonkAndFlashCommand, LockUnlockCommand
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -39,6 +39,7 @@ from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda.error import Error
 from carconnectivity_connectors.skoda._version import __version__
 from carconnectivity_connectors.skoda.mqtt_client import SkodaMQTTClient
+from carconnectivity_connectors.skoda.command_impl import SpinCommand
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Set, Union
@@ -91,6 +92,11 @@ class Connector(BaseConnector):
                 raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging._nameToLevel.keys())}')
         LOG.info("Loading skoda connector with config %s", config_remove_credentials(self.config))
 
+        if 'spin' in config and config['spin'] is not None:
+            self._spin: Optional[str] = config['spin']
+        else:
+            self._spin = None
+
         username: Optional[str] = None
         password: Optional[str] = None
         if 'username' in self.config and 'password' in self.config:
@@ -106,7 +112,13 @@ class Connector(BaseConnector):
                 secret: tuple[str, str, str] | None = secrets.authenticators("skoda")
                 if secret is None:
                     raise AuthenticationError(f'Authentication using {netrc_filename} failed: skoda not found in netrc')
-                username, _, password = secret
+                username, account, password = secret
+
+                if self._spin is None and account is not None:
+                    try:
+                        self._spin = account
+                    except ValueError as err:
+                        LOG.error('Could not parse spin from netrc: %s', err)
             except netrc.NetrcParseError as err:
                 LOG.error('Authentification using %s failed: %s', netrc_filename, err)
                 raise AuthenticationError(f'Authentication using {netrc_filename} failed: {err}') from err
@@ -875,11 +887,29 @@ class Connector(BaseConnector):
 
             # Add HONK_AND_FLASH command if necessary capabilities are available
             if vehicle.capabilities.has_capability('HONK_AND_FLASH') and vehicle.capabilities.has_capability('PARKING_POSITION'):
-                if vehicle.commands is not None and not vehicle.commands.contains_command('honk-flash'):
+                if vehicle.commands is not None and vehicle.commands.commands is not None \
+                        and not vehicle.commands.contains_command('honk-flash'):
                     honk_flash_command = HonkAndFlashCommand(parent=vehicle.commands)
                     honk_flash_command._add_on_set_hook(self.__on_honk_flash)  # pylint: disable=protected-access
                     honk_flash_command.enabled = True
                     vehicle.commands.add_command(honk_flash_command)
+
+            # Add lock and unlock command
+            if vehicle.capabilities.has_capability('ACCESS'):
+                if vehicle.doors is not None and vehicle.doors.commands is not None and vehicle.doors.commands.commands is not None \
+                        and not vehicle.doors.commands.contains_command('lock-unlock'):
+                    lock_unlock_command = LockUnlockCommand(parent=vehicle.doors.commands)
+                    lock_unlock_command._add_on_set_hook(self.__on_lock_unlock)  # pylint: disable=protected-access
+                    lock_unlock_command.enabled = True
+                    vehicle.doors.commands.add_command(lock_unlock_command)
+
+            # Add spin command
+            if vehicle.commands is not None and vehicle.commands.commands is not None \
+                    and not vehicle.commands.contains_command('spin'):
+                spin_command = SpinCommand(parent=vehicle.commands)
+                spin_command._add_on_set_hook(self.__on_spin)  # pylint: disable=protected-access
+                spin_command.enabled = True
+                vehicle.commands.add_command(spin_command)
 
             if 'specification' in vehicle_data and vehicle_data['specification'] is not None:
                 if 'model' in vehicle_data['specification'] and vehicle_data['specification']['model'] is not None:
@@ -1460,16 +1490,16 @@ class Connector(BaseConnector):
                 command_dict['targetTemperature']['temperatureValue'] = 25.0
                 command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/start'
-            settings_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
         elif command_arguments['command'] == ClimatizationStartStopCommand.Command.STOP:
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/stop'
-            settings_response: requests.Response = self.session.post(url, allow_redirects=True)
+            command_response: requests.Response = self.session.post(url, allow_redirects=True)
         else:
             raise SetterError(f'Unknown command {command_arguments["command"]}')
 
-        if settings_response.status_code != requests.codes['accepted']:
-            LOG.error('Could not start/stop air conditioning (%s: %s)', settings_response.status_code, settings_response.text)
-            raise SetterError(f'Could not start/stop air conditioning ({settings_response.status_code}: {settings_response.text})')
+        if command_response.status_code != requests.codes['accepted']:
+            LOG.error('Could not start/stop air conditioning (%s: %s)', command_response.status_code, command_response.text)
+            raise SetterError(f'Could not start/stop air conditioning ({command_response.status_code}: {command_response.text})')
         return command_arguments
 
     def __on_charging_start_stop(self, start_stop_command: ChargingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
@@ -1487,16 +1517,16 @@ class Connector(BaseConnector):
             raise SetterError('Command argument missing')
         if command_arguments['command'] == ChargingStartStopCommand.Command.START:
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/start'
-            settings_response: requests.Response = self.session.post(url, allow_redirects=True)
+            command_response: requests.Response = self.session.post(url, allow_redirects=True)
         elif command_arguments['command'] == ChargingStartStopCommand.Command.STOP:
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/stop'
-            settings_response: requests.Response = self.session.post(url, allow_redirects=True)
+            command_response: requests.Response = self.session.post(url, allow_redirects=True)
         else:
             raise SetterError(f'Unknown command {command_arguments["command"]}')
 
-        if settings_response.status_code != requests.codes['accepted']:
-            LOG.error('Could not start/stop charging (%s: %s)', settings_response.status_code, settings_response.text)
-            raise SetterError(f'Could not start/stop charging ({settings_response.status_code}: {settings_response.text})')
+        if command_response.status_code != requests.codes['accepted']:
+            LOG.error('Could not start/stop charging (%s: %s)', command_response.status_code, command_response.text)
+            raise SetterError(f'Could not start/stop charging ({command_response.status_code}: {command_response.text})')
         return command_arguments
 
     def __on_honk_flash(self, honk_flash_command: HonkAndFlashCommand, command_arguments: Union[str, Dict[str, Any]]) \
@@ -1524,10 +1554,67 @@ class Connector(BaseConnector):
             command_dict['vehiclePosition']['longitude'] = vehicle.position.longitude.value
 
             url = f'https://mysmob.api.connect.skoda-auto.cz/v1/vehicle-access/{vin}/honk-and-flash'
-            settings_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
-            if settings_response.status_code != requests.codes['accepted']:
-                LOG.error('Could not execute honk or flash command (%s: %s)', settings_response.status_code, settings_response.text)
-                raise SetterError(f'Could not execute honk or flash command ({settings_response.status_code}: {settings_response.text})')
+            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+            if command_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not execute honk or flash command (%s: %s)', command_response.status_code, command_response.text)
+                raise SetterError(f'Could not execute honk or flash command ({command_response.status_code}: {command_response.text})')
         else:
             raise SetterError(f'Unknown command {command_arguments["command"]}')
+        return command_arguments
+
+    def __on_lock_unlock(self, lock_unlock_command: LockUnlockCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if lock_unlock_command.parent is None or lock_unlock_command.parent.parent is None \
+                or lock_unlock_command.parent.parent.parent is None or not isinstance(lock_unlock_command.parent.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise SetterError('Command arguments are not a dictionary')
+        vehicle: SkodaVehicle = lock_unlock_command.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise SetterError('Command argument missing')
+        command_dict = {}
+        if self._spin is None:
+            raise SetterError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
+        command_dict['currentSpin'] = self._spin
+        if command_arguments['command'] == LockUnlockCommand.Command.LOCK:
+            url = f'https://mysmob.api.connect.skoda-auto.cz/v1/vehicle-access/{vin}/lock'
+        elif command_arguments['command'] == LockUnlockCommand.Command.UNLOCK:
+            url = f'https://mysmob.api.connect.skoda-auto.cz/v1/vehicle-access/{vin}/unlock'
+        else:
+            raise SetterError(f'Unknown command {command_arguments["command"]}')
+        command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+        if command_response.status_code != requests.codes['accepted']:
+            LOG.error('Could not execute locking command (%s: %s)', command_response.status_code, command_response.text)
+            raise SetterError(f'Could not execute locking command ({command_response.status_code}: {command_response.text})')
+        return command_arguments
+
+    def __on_spin(self, spin_command: SpinCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if spin_command.parent is None or spin_command.parent.parent is None or not isinstance(spin_command.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise SetterError('Command arguments are not a dictionary')
+        vehicle: SkodaVehicle = spin_command.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise SetterError('Command argument missing')
+        command_dict = {}
+        if self._spin is None:
+            raise SetterError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
+        command_dict['currentSpin'] = self._spin
+        if command_arguments['command'] == SpinCommand.Command.VERIFY:
+            url = 'https://mysmob.api.connect.skoda-auto.cz/v1/spin/verify'
+        else:
+            raise SetterError(f'Unknown command {command_arguments["command"]}')
+        command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+        if command_response.status_code != requests.codes['accepted']:
+            LOG.error('Could not execute spin command (%s: %s)', command_response.status_code, command_response.text)
+            raise SetterError(f'Could not execute spin command ({command_response.status_code}: {command_response.text})')
+        else:
+            LOG.info('Spin verify command executed successfully')
         return command_arguments

@@ -27,6 +27,7 @@ from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
 from carconnectivity.charging_connector import ChargingConnector
+from carconnectivity.commands import Commands
 from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand, HonkAndFlashCommand, LockUnlockCommand
 
 from carconnectivity_connectors.base.connector import BaseConnector
@@ -70,6 +71,7 @@ class Connector(BaseConnector):
 
         self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self)
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self)
+        self.commands: Commands = Commands(parent=self)
 
         self.user_id: Optional[str] = None
 
@@ -906,7 +908,7 @@ class Connector(BaseConnector):
             # Add spin command
             if vehicle.commands is not None and vehicle.commands.commands is not None \
                     and not vehicle.commands.contains_command('spin'):
-                spin_command = SpinCommand(parent=vehicle.commands)
+                spin_command = SpinCommand(parent=self.commands)
                 spin_command._add_on_set_hook(self.__on_spin)  # pylint: disable=protected-access
                 spin_command.enabled = True
                 vehicle.commands.add_command(spin_command)
@@ -1553,7 +1555,7 @@ class Connector(BaseConnector):
             command_dict['vehiclePosition']['latitude'] = vehicle.position.latitude.value
             command_dict['vehiclePosition']['longitude'] = vehicle.position.longitude.value
 
-            url = f'https://mysmob.api.connect.skoda-auto.cz/v1/vehicle-access/{vin}/honk-and-flash'
+            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-access/{vin}/honk-and-flash'
             command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
             if command_response.status_code != requests.codes['accepted']:
                 LOG.error('Could not execute honk or flash command (%s: %s)', command_response.status_code, command_response.text)
@@ -1576,13 +1578,16 @@ class Connector(BaseConnector):
         if 'command' not in command_arguments:
             raise SetterError('Command argument missing')
         command_dict = {}
-        if self._spin is None:
-            raise SetterError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
-        command_dict['currentSpin'] = self._spin
+        if 'spin' in command_arguments:
+            command_dict['currentSpin'] = command_arguments['spin']
+        else:
+            if self._spin is None:
+                raise SetterError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
+            command_dict['currentSpin'] = self._spin
         if command_arguments['command'] == LockUnlockCommand.Command.LOCK:
-            url = f'https://mysmob.api.connect.skoda-auto.cz/v1/vehicle-access/{vin}/lock'
+            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-access/{vin}/lock'
         elif command_arguments['command'] == LockUnlockCommand.Command.UNLOCK:
-            url = f'https://mysmob.api.connect.skoda-auto.cz/v1/vehicle-access/{vin}/unlock'
+            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-access/{vin}/unlock'
         else:
             raise SetterError(f'Unknown command {command_arguments["command"]}')
         command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
@@ -1606,7 +1611,12 @@ class Connector(BaseConnector):
         command_dict = {}
         if self._spin is None:
             raise SetterError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
-        command_dict['currentSpin'] = self._spin
+        if 'spin' in command_arguments:
+            command_dict['currentSpin'] = command_arguments['spin']
+        else:
+            if self._spin is None:
+                raise SetterError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
+            command_dict['currentSpin'] = self._spin
         if command_arguments['command'] == SpinCommand.Command.VERIFY:
             url = 'https://mysmob.api.connect.skoda-auto.cz/v1/spin/verify'
         else:

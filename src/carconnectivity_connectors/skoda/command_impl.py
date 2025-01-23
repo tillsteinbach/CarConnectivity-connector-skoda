@@ -37,6 +37,8 @@ class SpinCommand(GenericCommand):
             parser = ThrowingArgumentParser(prog='', add_help=False, exit_on_error=False)
             parser.add_argument('command', help='Command to execute', type=SpinCommand.Command,
                                 choices=list(SpinCommand.Command))
+            parser.add_argument('--spin', dest='spin', help='Spin to be used instead of spin from config or .netrc', type=str, required=False,
+                                default=None)
             try:
                 args = parser.parse_args(new_value.split(sep=' '))
             except argparse.ArgumentError as e:
@@ -44,6 +46,8 @@ class SpinCommand(GenericCommand):
 
             newvalue_dict = {}
             newvalue_dict['command'] = args.command
+            if args.spin is not None:
+                newvalue_dict['spin'] = args.spin
             new_value = newvalue_dict
         elif isinstance(new_value, dict):
             if 'command' in new_value and isinstance(new_value['command'], str):

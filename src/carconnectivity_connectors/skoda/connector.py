@@ -1598,14 +1598,8 @@ class Connector(BaseConnector):
 
     def __on_spin(self, spin_command: SpinCommand, command_arguments: Union[str, Dict[str, Any]]) \
             -> Union[str, Dict[str, Any]]:
-        if spin_command.parent is None or spin_command.parent.parent is None or not isinstance(spin_command.parent.parent, SkodaVehicle):
-            raise SetterError('Object hierarchy is not as expected')
         if not isinstance(command_arguments, dict):
             raise SetterError('Command arguments are not a dictionary')
-        vehicle: SkodaVehicle = spin_command.parent.parent
-        vin: Optional[str] = vehicle.vin.value
-        if vin is None:
-            raise SetterError('VIN in object hierarchy missing')
         if 'command' not in command_arguments:
             raise SetterError('Command argument missing')
         command_dict = {}
@@ -1618,11 +1612,11 @@ class Connector(BaseConnector):
                 raise SetterError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
             command_dict['currentSpin'] = self._spin
         if command_arguments['command'] == SpinCommand.Command.VERIFY:
-            url = 'https://mysmob.api.connect.skoda-auto.cz/v1/spin/verify'
+            url = 'https://mysmob.api.connect.skoda-auto.cz/api/v1/spin/verify'
         else:
             raise SetterError(f'Unknown command {command_arguments["command"]}')
         command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
-        if command_response.status_code != requests.codes['accepted']:
+        if command_response.status_code != requests.codes['ok']:
             LOG.error('Could not execute spin command (%s: %s)', command_response.status_code, command_response.text)
             raise SetterError(f'Could not execute spin command ({command_response.status_code}: {command_response.text})')
         else:

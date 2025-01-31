@@ -14,14 +14,12 @@ from carconnectivity.util import ThrowingArgumentParser
 if TYPE_CHECKING:
     from carconnectivity.objects import Optional
 
-LOG: logging.Logger = logging.getLogger("carconnectivity")
+LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda")
 
 
 class SpinCommand(GenericCommand):
     """
-    LockUnlockCommand is a command class for locking and unlocking the vehicle.
-
-    Command (Enum): Enum class representing different commands for locking.
+    SpinCommand is a command class for verifying the spin
 
     """
     def __init__(self, name: str = 'spin', parent: Optional[GenericObject] = None) -> None:

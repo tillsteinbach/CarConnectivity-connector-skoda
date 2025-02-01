@@ -40,7 +40,7 @@ jobs:
         python -m build
     - name: Install built package
       run: |
-        pip install dist/*.whl
+        pip install --pre dist/*.whl
     - name: Lint
       run: |
         make lint

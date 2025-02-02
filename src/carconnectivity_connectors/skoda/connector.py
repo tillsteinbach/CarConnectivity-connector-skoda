@@ -368,7 +368,7 @@ class Connector(BaseConnector):
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}'
         data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if data is not None:
-            if not vehicle.climatization.commands.contains_command('start-stop'):
+            if not vehicle.charging.commands.contains_command('start-stop'):
                 start_stop_command: ChargingStartStopCommand = ChargingStartStopCommand(parent=vehicle.charging.commands)
                 start_stop_command._add_on_set_hook(self.__on_charging_start_stop)  # pylint: disable=protected-access
                 start_stop_command.enabled = True

@@ -13,7 +13,6 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.2.1...HEAD
-[0.2.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.2.1
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.2...HEAD
 [0.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.2
 [0.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.1

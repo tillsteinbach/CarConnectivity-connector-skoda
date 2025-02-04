@@ -1296,7 +1296,7 @@ class Connector(BaseConnector):
                     elif command_arguments['target_temperature_unit'] == Temperature.K:
                         command_dict['targetTemperature']['unitInCar'] = 'KELVIN'
                     else:
-                        raise CommandError(f'Unknown temperature unit {command_arguments['target_temperature_unit']}')
+                        raise CommandError(f'Unknown temperature unit {command_arguments["target_temperature_unit"]}')
                 else:
                     command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
             elif start_stop_command.parent is not None and (climatization := start_stop_command.parent.parent) is not None \

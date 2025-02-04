@@ -41,6 +41,9 @@ jobs:
     - name: Install built package
       run: |
         pip install --pre dist/*.whl
+    - name: Run
+      run: |
+        carconnectivity test/integration_test/carConnectivity.json 2>&1 | grep -q 'There was a problem when authenticating with one or multiple services'
     - name: Lint
       run: |
         make lint

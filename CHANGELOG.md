@@ -5,10 +5,6 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
-## [0.2.1] - 2025-02-04
-### Fixed
-- Syntax error for python < 3.12 fixed
-
 ## [0.2] - 2025-02-02
 ### Added
 - Wake Sleep command

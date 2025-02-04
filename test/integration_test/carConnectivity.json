@@ -3,7 +3,7 @@
         "log_level": "debug",
         "connectors": [
             {
-                "type": "volkswagen",
+                "type": "skoda",
                 "disabled": false,
                 "config": {
                     "log_level": "debug",

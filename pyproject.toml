@@ -17,7 +17,8 @@ dependencies = [
     "carconnectivity>=0.2",
     "oauthlib~=3.2.2",
     "requests~=2.32.3",
-    "jwt~=1.3.1"
+    "jwt~=1.3.1",
+    "paho-mqtt~=2.1.0",
 ]
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -18,8 +18,8 @@ from requests.adapters import HTTPAdapter
 
 from carconnectivity.errors import AuthenticationError, RetrievalError
 
-from carconnectivity_connectors.volkswagen.auth.auth_util import add_bearer_auth_header
-from carconnectivity_connectors.volkswagen.auth.helpers.blacklist_retry import BlacklistRetry
+from carconnectivity_connectors.skoda.auth.auth_util import add_bearer_auth_header
+from carconnectivity_connectors.skoda.auth.helpers.blacklist_retry import BlacklistRetry
 
 if TYPE_CHECKING:
     from typing import Dict

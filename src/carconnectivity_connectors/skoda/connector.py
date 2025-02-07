@@ -1194,6 +1194,9 @@ class Connector(BaseConnector):
     def get_version(self) -> str:
         return __version__
 
+    def get_type(self) -> str:
+        return "carconnectivity-connector-skoda"
+
     def __on_air_conditioning_target_temperature_change(self, temperature_attribute: TemperatureAttribute, target_temperature: float) -> float:
         """
         Callback for the climatization target temperature change.

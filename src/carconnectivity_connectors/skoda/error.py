@@ -18,8 +18,8 @@ class Error(GenericObject):
 
     def __init__(self, object_id, parent: Optional[GenericObject] = None) -> None:
         super().__init__(object_id, parent=parent)
-        self.type: EnumAttribute = EnumAttribute("type", parent=self)
-        self.description: StringAttribute = StringAttribute("description", parent=self)
+        self.type: EnumAttribute = EnumAttribute("type", parent=self, tags={'connector_custom'})
+        self.description: StringAttribute = StringAttribute("description", parent=self, tags={'connector_custom'})
 
     class ChargingError(Enum):
         """

@@ -32,7 +32,7 @@ class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
             super().__init__(vehicle=vehicle)
             self.settings: Charging.Settings = SkodaCharging.Settings(origin=self.settings)
         self.errors: Dict[str, Error] = {}
-        self.is_in_saved_location: BooleanAttribute = BooleanAttribute("is_in_saved_location", parent=self)
+        self.is_in_saved_location: BooleanAttribute = BooleanAttribute("is_in_saved_location", parent=self, tags={'connector_custom'})
 
     class Settings(Charging.Settings):
         """
@@ -43,10 +43,10 @@ class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
                 super().__init__(origin=origin)
             else:
                 super().__init__(parent=parent)
-            self.preferred_charge_mode: EnumAttribute = EnumAttribute("preferred_charge_mode", parent=self)
-            self.available_charge_modes: StringAttribute = StringAttribute("available_charge_modes", parent=self)
-            self.charging_care_mode: EnumAttribute = EnumAttribute("charging_care_mode", parent=self)
-            self.battery_support: EnumAttribute = EnumAttribute("battery_support", parent=self)
+            self.preferred_charge_mode: EnumAttribute = EnumAttribute("preferred_charge_mode", parent=self, tags={'connector_custom'})
+            self.available_charge_modes: StringAttribute = StringAttribute("available_charge_modes", parent=self, tags={'connector_custom'})
+            self.charging_care_mode: EnumAttribute = EnumAttribute("charging_care_mode", parent=self, tags={'connector_custom'})
+            self.battery_support: EnumAttribute = EnumAttribute("battery_support", parent=self, tags={'connector_custom'})
 
     class SkodaChargingState(Enum,):
         """

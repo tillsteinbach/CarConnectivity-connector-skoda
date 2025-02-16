@@ -179,7 +179,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                 vin: str = vehicle.vin.value
                 # If the skoda connector is managing this vehicle
                 if self._skoda_connector in vehicle.managing_connectors:
-                    account_events: Set[str] = {'privacy'}
+                    account_events: Set[str] = {'privacy',
+                                                'guest-user-nomination',
+                                                'primary-user-nomination'}
+                    vehicle_status_events: Set[str] = {'vehicle-connection-status'}
                     operation_requests: Set[str] = {
                         'air-conditioning/set-air-conditioning-at-unlock',
                         'air-conditioning/set-air-conditioning-seats-heating',
@@ -216,6 +219,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                     # Compile all possible topics
                     for event in account_events:
                         possible_topics.add(f'{user_id}/{vin}/account-event/{event}')
+                    for event in vehicle_status_events:
+                        possible_topics.add(f'{user_id}/{vin}/vehicle-status/{event}')
                     for event in operation_requests:
                         possible_topics.add(f'{user_id}/{vin}/operation-request/{event}')
                     for event in service_events:

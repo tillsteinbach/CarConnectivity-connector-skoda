@@ -102,7 +102,7 @@ class Capability(GenericObject):
             raise ValueError('Capability ID cannot be None')
         super().__init__(object_id=capability_id, parent=capabilities)
         self.delay_notifications = True
-        self.capability_id = StringAttribute("id", self, capability_id)
+        self.capability_id = StringAttribute("id", self, capability_id, tags={'connector_custom'})
         self.statuses = list[Capability.Status]
         self.enabled = True
         self.delay_notifications = False

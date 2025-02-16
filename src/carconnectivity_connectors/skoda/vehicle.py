@@ -8,8 +8,15 @@ from carconnectivity.charging import Charging
 from carconnectivity_connectors.skoda.capability import Capabilities
 from carconnectivity_connectors.skoda.charging import SkodaCharging
 
+SUPPORT_IMAGES = False
+try:
+    from PIL import Image
+    SUPPORT_IMAGES = True
+except ImportError:
+    pass
+
 if TYPE_CHECKING:
-    from typing import Optional
+    from typing import Optional, Dict
     from carconnectivity.garage import Garage
     from carconnectivity_connectors.base.connector import BaseConnector
 
@@ -24,9 +31,14 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
             super().__init__(origin=origin)
             self.capabilities: Capabilities = origin.capabilities
             self.capabilities.parent = self
+            if SUPPORT_IMAGES:
+                self._car_images = origin._car_images
+
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
             self.capabilities = Capabilities(vehicle=self)
+            if SUPPORT_IMAGES:
+                self._car_images: Dict[str, Image.Image] = {}
         self.manufacturer._set_value(value='Škoda')  # pylint: disable=protected-access
 
 

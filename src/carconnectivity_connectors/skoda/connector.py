@@ -42,6 +42,16 @@ from carconnectivity_connectors.skoda._version import __version__
 from carconnectivity_connectors.skoda.mqtt_client import SkodaMQTTClient
 from carconnectivity_connectors.skoda.command_impl import SpinCommand
 
+SUPPORT_IMAGES = False
+try:
+    from PIL import Image
+    import base64
+    import io
+    SUPPORT_IMAGES = True
+    from carconnectivity.attributes import ImageAttribute
+except ImportError:
+    pass
+
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Set, Union
 
@@ -69,8 +79,8 @@ class Connector(BaseConnector):
         self._background_connect_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
-        self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self)
-        self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self)
+        self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self, tags={'connector_custom'})
+        self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
         self.commands: Commands = Commands(parent=self)
 
         self.user_id: Optional[str] = None
@@ -315,6 +325,8 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'vehicles', vehicle_dict,  {'vin', 'licensePlate', 'name'})
 
                         vehicle = self.fetch_vehicle_details(vehicle)
+                        if SUPPORT_IMAGES:
+                            vehicle = self.fetch_vehicle_images(vehicle)
                     else:
                         raise APIError('Could not parse vehicle, vin missing')
         for vin in set(garage.list_vehicle_vins()) - seen_vehicle_vins:
@@ -928,6 +940,68 @@ class Connector(BaseConnector):
             else:
                 vehicle.model._set_value(None)  # pylint: disable=protected-access
             log_extra_keys(LOG_API, 'api/v2/garage/vehicles/VIN', vehicle_data, {'softwareVersion'})
+        return vehicle
+
+    def fetch_vehicle_images(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
+        if SUPPORT_IMAGES:
+            url: str = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-information/{vehicle.vin.value}/renders'
+            data = self._fetch_data(url, session=self.session, allow_http_error=True)
+            if data is not None and 'compositeRenders' in data:  # pylint: disable=too-many-nested-blocks
+                for image in data['compositeRenders']:
+                    if not 'layers' in image or image['layers'] is None or len(image['layers']) == 0:
+                        continue
+                    image_url: Optional[str] = None
+                    for layer in image['layers']:
+                        if 'url' in layer and layer['url'] is not None:
+                            image_url = layer['url']
+                            break
+                    if image_url is None:
+                        continue
+                    img = None
+                    cache_date = None
+                    if self.max_age is not None and self.session.cache is not None and image_url in self.session.cache:
+                        img, cache_date_string = self.session.cache[image_url]
+                        img = base64.b64decode(img)  # pyright: ignore[reportPossiblyUnboundVariable]
+                        img = Image.open(io.BytesIO(img))  # pyright: ignore[reportPossiblyUnboundVariable]
+                        cache_date = datetime.fromisoformat(cache_date_string)
+                    if img is None or self.max_age is None \
+                            or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.max_age))):
+                        try:
+                            image_download_response = requests.get(image_url, stream=True)
+                            if image_download_response.status_code == requests.codes['ok']:
+                                img = Image.open(image_download_response.raw)  # pyright: ignore[reportPossiblyUnboundVariable]
+                                if self.session.cache is not None:
+                                    buffered = io.BytesIO()  # pyright: ignore[reportPossiblyUnboundVariable]
+                                    img.save(buffered, format="PNG")
+                                    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")  # pyright: ignore[reportPossiblyUnboundVariable]
+                                    self.session.cache[image_url] = (img_str, str(datetime.utcnow()))
+                            elif image_download_response.status_code == requests.codes['unauthorized']:
+                                LOG.info('Server asks for new authorization')
+                                self.session.login()
+                                image_download_response = self.session.get(image_url, stream=True)
+                                if image_download_response.status_code == requests.codes['ok']:
+                                    img = Image.open(image_download_response.raw)  # pyright: ignore[reportPossiblyUnboundVariable]
+                                    if self.session.cache is not None:
+                                        buffered = io.BytesIO()  # pyright: ignore[reportPossiblyUnboundVariable]
+                                        img.save(buffered, format="PNG")
+                                        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")  # pyright: ignore[reportPossiblyUnboundVariable]
+                                        self.session.cache[image_url] = (img_str, str(datetime.utcnow()))
+                        except requests.exceptions.ConnectionError as connection_error:
+                            raise RetrievalError(f'Connection error: {connection_error}') from connection_error
+                        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+                            raise RetrievalError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+                        except requests.exceptions.ReadTimeout as timeout_error:
+                            raise RetrievalError(f'Timeout during read: {timeout_error}') from timeout_error
+                        except requests.exceptions.RetryError as retry_error:
+                            raise RetrievalError(f'Retrying failed: {retry_error}') from retry_error
+                    if img is not None:
+                        vehicle._car_images[image['viewType']] = img  # pylint: disable=protected-access
+                        if image['viewType'] == 'UNMODIFIED_EXTERIOR_FRONT':
+                            if 'car_picture' in vehicle.images.images:
+                                vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
+                            else:
+                                vehicle.images.images['car_picture']: ImageAttribute = ImageAttribute(name="car_picture", parent=vehicle.images,
+                                                                                                        value=img, tags={'carconnectivity'})
         return vehicle
 
     def fetch_driving_range(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

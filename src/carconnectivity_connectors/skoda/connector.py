@@ -85,7 +85,7 @@ class Connector(BaseConnector):
 
         self.user_id: Optional[str] = None
 
-        LOG.info("Loading volkswagen connector with config %s", config_remove_credentials(config))
+        LOG.info("Loading skoda connector with config %s", config_remove_credentials(config))
 
         if 'spin' in config and config['spin'] is not None:
             self.active_config['spin'] = config['spin']

@@ -15,7 +15,7 @@ import requests
 from carconnectivity.garage import Garage
 from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
-    TemporaryAuthenticationError, ConfigurationError, SetterError, CommandError
+    TemporaryAuthenticationError, SetterError, CommandError
 from carconnectivity.util import robust_time_parse, log_extra_keys, config_remove_credentials
 from carconnectivity.units import Length, Speed, Power, Temperature
 from carconnectivity.doors import Doors
@@ -71,7 +71,7 @@ class Connector(BaseConnector):
         max_age (Optional[int]): Maximum age for cached data in seconds.
     """
     def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict) -> None:
-        BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config)
+        BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config, log=LOG, api_log=LOG_API)
 
         self._mqtt_client: SkodaMQTTClient = SkodaMQTTClient(skoda_connector=self)
 
@@ -85,77 +85,62 @@ class Connector(BaseConnector):
 
         self.user_id: Optional[str] = None
 
-        # Configure logging
-        if 'log_level' in config and config['log_level'] is not None:
-            config['log_level'] = config['log_level'].upper()
-            if config['log_level'] in logging._nameToLevel:
-                LOG.setLevel(config['log_level'])
-                self.log_level._set_value(config['log_level'])  # pylint: disable=protected-access
-                logging.getLogger('requests').setLevel(config['log_level'])
-                logging.getLogger('urllib3').setLevel(config['log_level'])
-                logging.getLogger('oauthlib').setLevel(config['log_level'])
-            else:
-                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging._nameToLevel.keys())}')
-        if 'api_log_level' in config and config['api_log_level'] is not None:
-            config['api_log_level'] = config['api_log_level'].upper()
-            if config['api_log_level'] in logging._nameToLevel:
-                LOG_API.setLevel(config['api_log_level'])
-            else:
-                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging._nameToLevel.keys())}')
-        LOG.info("Loading skoda connector with config %s", config_remove_credentials(self.config))
+        LOG.info("Loading volkswagen connector with config %s", config_remove_credentials(config))
 
         if 'spin' in config and config['spin'] is not None:
-            self._spin: Optional[str] = config['spin']
+            self.active_config['spin'] = config['spin']
         else:
-            self._spin = None
+            self.active_config['spin'] = None
 
-        username: Optional[str] = None
-        password: Optional[str] = None
-        if 'username' in self.config and 'password' in self.config:
-            username = self.config['username']
-            password = self.config['password']
+        self.active_config['username'] = None
+        self.active_config['password'] = None
+        if 'username' in config and 'password' in config:
+            self.active_config['username'] = config['username']
+            self.active_config['password'] = config['password']
         else:
-            if 'netrc' in self.config:
-                netrc_filename: str = self.config['netrc']
+            if 'netrc' in config:
+                self.active_config['netrc'] = config['netrc']
             else:
-                netrc_filename = os.path.join(os.path.expanduser("~"), ".netrc")
+                self.active_config['netrc'] = os.path.join(os.path.expanduser("~"), ".netrc")
             try:
-                secrets = netrc.netrc(file=netrc_filename)
+                secrets = netrc.netrc(file=self.active_config['netrc'])
                 secret: tuple[str, str, str] | None = secrets.authenticators("skoda")
                 if secret is None:
-                    raise AuthenticationError(f'Authentication using {netrc_filename} failed: skoda not found in netrc')
-                username, account, password = secret
+                    raise AuthenticationError(f'Authentication using {self.active_config['netrc']} failed: skoda not found in netrc')
+                self.active_config['username'], account, self.active_config['password'] = secret
 
-                if self._spin is None and account is not None:
+                if self.active_config['spin'] is None and account is not None:
                     try:
-                        self._spin = account
+                        self.active_config['spin'] = account
                     except ValueError as err:
                         LOG.error('Could not parse spin from netrc: %s', err)
             except netrc.NetrcParseError as err:
-                LOG.error('Authentification using %s failed: %s', netrc_filename, err)
-                raise AuthenticationError(f'Authentication using {netrc_filename} failed: {err}') from err
+                LOG.error('Authentification using %s failed: %s', self.active_config['netrc'], err)
+                raise AuthenticationError(f'Authentication using {self.active_config['netrc']} failed: {err}') from err
             except TypeError as err:
-                if 'username' not in self.config:
-                    raise AuthenticationError(f'"skoda" entry was not found in {netrc_filename} netrc-file.'
+                if 'username' not in config:
+                    raise AuthenticationError(f'"skoda" entry was not found in {self.active_config['netrc']} netrc-file.'
                                               ' Create it or provide username and password in config') from err
             except FileNotFoundError as err:
-                raise AuthenticationError(f'{netrc_filename} netrc-file was not found. Create it or provide username and password in config') from err
+                raise AuthenticationError(f'{self.active_config['netrc']} netrc-file was not found. Create it or provide username and password in config') \
+                                          from err
 
-        interval: int = 300
-        if 'interval' in self.config:
-            interval = self.config['interval']
-            if interval < 300:
-                raise ValueError('Intervall must be at least 300 seconds')
-        self.max_age: int = interval - 1
-        if 'max_age' in self.config:
-            self.max_age = self.config['max_age']
-        self.interval._set_value(timedelta(seconds=interval))  # pylint: disable=protected-access
+        self.active_config['interval'] = 300
+        if 'interval' in config:
+            self.active_config['interval'] = config['interval']
+            if self.active_config['interval'] < 180:
+                raise ValueError('Intervall must be at least 180 seconds')
+        self.active_config['max_age'] = self.active_config['interval'] - 1
+        if 'max_age' in config:
+            self.active_config['max_age'] = config['max_age']
+        self.interval._set_value(timedelta(seconds=self.active_config['interval']))  # pylint: disable=protected-access
 
-        if username is None or password is None:
+        if self.active_config['username'] is None or self.active_config['password'] is None:
             raise AuthenticationError('Username or password not provided')
 
         self._manager: SessionManager = SessionManager(tokenstore=car_connectivity.get_tokenstore(), cache=car_connectivity.get_cache())
-        session: requests.Session = self._manager.get_session(Service.MY_SKODA, SessionUser(username=username, password=password))
+        session: requests.Session = self._manager.get_session(Service.MY_SKODA, SessionUser(username=self.active_config['username'],
+                                                                                            password=self.active_config['password']))
         if not isinstance(session, MySkodaSession):
             raise AuthenticationError('Could not create session')
         self.session: MySkodaSession = session
@@ -948,7 +933,7 @@ class Connector(BaseConnector):
             data = self._fetch_data(url, session=self.session, allow_http_error=True)
             if data is not None and 'compositeRenders' in data:  # pylint: disable=too-many-nested-blocks
                 for image in data['compositeRenders']:
-                    if not 'layers' in image or image['layers'] is None or len(image['layers']) == 0:
+                    if 'layers' not in image or image['layers'] is None or len(image['layers']) == 0:
                         continue
                     image_url: Optional[str] = None
                     for layer in image['layers']:
@@ -959,13 +944,13 @@ class Connector(BaseConnector):
                         continue
                     img = None
                     cache_date = None
-                    if self.max_age is not None and self.session.cache is not None and image_url in self.session.cache:
+                    if self.active_config['max_age'] is not None and self.session.cache is not None and image_url in self.session.cache:
                         img, cache_date_string = self.session.cache[image_url]
                         img = base64.b64decode(img)  # pyright: ignore[reportPossiblyUnboundVariable]
                         img = Image.open(io.BytesIO(img))  # pyright: ignore[reportPossiblyUnboundVariable]
                         cache_date = datetime.fromisoformat(cache_date_string)
-                    if img is None or self.max_age is None \
-                            or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.max_age))):
+                    if img is None or self.active_config['max_age'] is None \
+                            or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.active_config['max_age']))):
                         try:
                             image_download_response = requests.get(image_url, stream=True)
                             if image_download_response.status_code == requests.codes['ok']:
@@ -1000,8 +985,8 @@ class Connector(BaseConnector):
                             if 'car_picture' in vehicle.images.images:
                                 vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
                             else:
-                                vehicle.images.images['car_picture']: ImageAttribute = ImageAttribute(name="car_picture", parent=vehicle.images,
-                                                                                                        value=img, tags={'carconnectivity'})
+                                vehicle.images.images['car_picture'] = ImageAttribute(name="car_picture", parent=vehicle.images,
+                                                                                      value=img, tags={'carconnectivity'})
         return vehicle
 
     def fetch_driving_range(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
@@ -1224,11 +1209,11 @@ class Connector(BaseConnector):
                     allowed_errors=None) -> Optional[Dict[str, Any]]:  # noqa: C901
         data: Optional[Dict[str, Any]] = None
         cache_date: Optional[datetime] = None
-        if not no_cache and (self.max_age is not None and session.cache is not None and url in session.cache):
+        if not no_cache and (self.active_config['max_age'] is not None and session.cache is not None and url in session.cache):
             data, cache_date_string = session.cache[url]
             cache_date = datetime.fromisoformat(cache_date_string)
-        if data is None or self.max_age is None \
-                or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.max_age))):
+        if data is None or self.active_config['max_age'] is None \
+                or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.active_config['max_age']))):
             try:
                 status_response: requests.Response = session.get(url, allow_redirects=False)
                 self._record_elapsed(status_response.elapsed)
@@ -1488,9 +1473,9 @@ class Connector(BaseConnector):
         if 'spin' in command_arguments:
             command_dict['currentSpin'] = command_arguments['spin']
         else:
-            if self._spin is None:
+            if self.active_config['spin'] is None:
                 raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
-            command_dict['currentSpin'] = self._spin
+            command_dict['currentSpin'] = self.active_config['spin']
         if command_arguments['command'] == LockUnlockCommand.Command.LOCK:
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-access/{vin}/lock'
         elif command_arguments['command'] == LockUnlockCommand.Command.UNLOCK:
@@ -1537,14 +1522,14 @@ class Connector(BaseConnector):
         if 'command' not in command_arguments:
             raise CommandError('Command argument missing')
         command_dict = {}
-        if self._spin is None:
+        if self.active_config['spin'] is None:
             raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
         if 'spin' in command_arguments:
             command_dict['currentSpin'] = command_arguments['spin']
         else:
-            if self._spin is None or self._spin == '':
+            if self.active_config['spin'] is None or self.active_config['spin'] == '':
                 raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
-            command_dict['currentSpin'] = self._spin
+            command_dict['currentSpin'] = self.active_config['spin']
         if command_arguments['command'] == SpinCommand.Command.VERIFY:
             url = 'https://mysmob.api.connect.skoda-auto.cz/api/v1/spin/verify'
         else:

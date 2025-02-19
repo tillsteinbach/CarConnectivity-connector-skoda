@@ -119,7 +119,7 @@ class Connector(BaseConnector):
                 raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: {err}') from err
             except TypeError as err:
                 if 'username' not in config:
-                    raise AuthenticationError(f'"skoda" entry was not found in {self.active_config['netrc']} netrc-file.'
+                    raise AuthenticationError(f'"skoda" entry was not found in {self.active_config["netrc"]} netrc-file.'
                                               ' Create it or provide username and password in config') from err
             except FileNotFoundError as err:
                 raise AuthenticationError(f'{self.active_config["netrc"]} netrc-file was not found. Create it or provide username and password in config') \

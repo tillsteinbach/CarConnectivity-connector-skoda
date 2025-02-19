@@ -106,7 +106,7 @@ class Connector(BaseConnector):
                 secrets = netrc.netrc(file=self.active_config['netrc'])
                 secret: tuple[str, str, str] | None = secrets.authenticators("skoda")
                 if secret is None:
-                    raise AuthenticationError(f'Authentication using {self.active_config['netrc']} failed: skoda not found in netrc')
+                    raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: skoda not found in netrc')
                 self.active_config['username'], account, self.active_config['password'] = secret
 
                 if self.active_config['spin'] is None and account is not None:
@@ -116,13 +116,13 @@ class Connector(BaseConnector):
                         LOG.error('Could not parse spin from netrc: %s', err)
             except netrc.NetrcParseError as err:
                 LOG.error('Authentification using %s failed: %s', self.active_config['netrc'], err)
-                raise AuthenticationError(f'Authentication using {self.active_config['netrc']} failed: {err}') from err
+                raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: {err}') from err
             except TypeError as err:
                 if 'username' not in config:
                     raise AuthenticationError(f'"skoda" entry was not found in {self.active_config['netrc']} netrc-file.'
                                               ' Create it or provide username and password in config') from err
             except FileNotFoundError as err:
-                raise AuthenticationError(f'{self.active_config['netrc']} netrc-file was not found. Create it or provide username and password in config') \
+                raise AuthenticationError(f'{self.active_config["netrc"]} netrc-file was not found. Create it or provide username and password in config') \
                                           from err
 
         self.active_config['interval'] = 300

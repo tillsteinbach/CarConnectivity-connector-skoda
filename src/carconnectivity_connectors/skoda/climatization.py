@@ -1,12 +1,12 @@
 """
-Module for charging for skoda vehicles.
+Module for climatization for skoda vehicles.
 """
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from carconnectivity.climatization import Climatization
 from carconnectivity.objects import GenericObject
-from carconnectivity.vehicle import ElectricVehicle
+from carconnectivity.vehicle import GenericVehicle
 
 from carconnectivity_connectors.skoda.error import Error
 
@@ -21,13 +21,15 @@ class SkodaClimatization(Climatization):  # pylint: disable=too-many-instance-at
     This class extends the Climatization class and includes an enumeration of various
     charging states specific to Skoda vehicles.
     """
-    def __init__(self, vehicle: ElectricVehicle | None = None, origin: Optional[Climatization] = None) -> None:
+    def __init__(self, vehicle: GenericVehicle | None = None, origin: Optional[Climatization] = None) -> None:
         if origin is not None:
             super().__init__(origin=origin)
-            self.settings: Climatization.Settings = SkodaClimatization.Settings(origin=origin.settings)
+            if not isinstance(self.settings, SkodaClimatization.Settings):
+                self.settings: Climatization.Settings = SkodaClimatization.Settings(parent=self, origin=origin.settings)
+            self.settings.parent = self
         else:
             super().__init__(vehicle=vehicle)
-            self.settings: Climatization.Settings = SkodaClimatization.Settings(origin=self.settings)
+            self.settings: Climatization.Settings = SkodaClimatization.Settings(parent=self)
         self.errors: Dict[str, Error] = {}
 
     class Settings(Climatization.Settings):
@@ -36,6 +38,6 @@ class SkodaClimatization(Climatization):  # pylint: disable=too-many-instance-at
         """
         def __init__(self, parent: Optional[GenericObject] = None, origin: Optional[Climatization.Settings] = None) -> None:
             if origin is not None:
-                super().__init__(origin=origin)
+                super().__init__(parent=parent, origin=origin)
             else:
                 super().__init__(parent=parent)

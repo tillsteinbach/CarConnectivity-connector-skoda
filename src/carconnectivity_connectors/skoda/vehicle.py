@@ -7,6 +7,7 @@ from carconnectivity.charging import Charging
 
 from carconnectivity_connectors.skoda.capability import Capabilities
 from carconnectivity_connectors.skoda.charging import SkodaCharging
+from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 
 SUPPORT_IMAGES = False
 try:
@@ -36,6 +37,7 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
 
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
+            self.climatization = SkodaClimatization(vehicle=self, origin=self.climatization)
             self.capabilities = Capabilities(vehicle=self)
             if SUPPORT_IMAGES:
                 self._car_images: Dict[str, Image.Image] = {}

@@ -345,6 +345,8 @@ class Connector(BaseConnector):
                         vehicle_to_update = self.fetch_charging(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('AIR_CONDITIONING'):
                         vehicle_to_update = self.fetch_air_conditioning(vehicle_to_update)
+                    if vehicle_to_update.capabilities.has_capability('VEHICLE_HEALTH_INSPECTION'):
+                        vehicle_to_update = self.fetch_maintenance(vehicle_to_update)
 
     def fetch_charging(self, vehicle: SkodaElectricVehicle, no_cache: bool = False) -> SkodaElectricVehicle:
         """
@@ -606,6 +608,53 @@ class Connector(BaseConnector):
                 vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
                 vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
                 vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+        return vehicle
+
+    def fetch_maintenance(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
+        """
+        Fetches the maintenance information for a given Skoda vehicle.
+
+        Args:
+            vehicle (SkodaVehicle): The vehicle object for which maintenance information is to be fetched.
+            no_cache (bool, optional): If True, bypasses the cache and fetches fresh data. Defaults to False.
+
+        Returns:
+            SkodaVehicle: The vehicle object with updated maintenance information.
+
+        Raises:
+            APIError: If the VIN is missing or if the 'capturedAt' field is missing in the fetched data.
+            ValueError: If the vehicle has no charging object.
+        """
+        vin = vehicle.vin.value
+        if vin is None:
+            raise APIError('VIN is missing')
+        if vehicle.position is None:
+            raise ValueError('Vehicle has no charging object')
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v3/vehicle-maintenance/vehicles/{vin}/report'
+        data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
+        #{'capturedAt': '2025-02-24T19:54:32.728Z', 'inspectionDueInDays': 620, 'mileageInKm': 2512}
+        if data is not None:
+            if 'capturedAt' in data and data['capturedAt'] is not None:
+                captured_at: datetime = robust_time_parse(data['capturedAt'])
+            else:
+                raise APIError('Could not fetch maintenance, capturedAt missing')
+            if 'mileageInKm' in data and data['mileageInKm'] is not None:
+                vehicle.odometer._set_value(value=data['mileageInKm'], measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+            else:
+                vehicle.odometer._set_value(None)  # pylint: disable=protected-access
+            if 'inspectionDueInDays' in data and data['inspectionDueInDays'] is not None:
+                inspection_due: timedelta = timedelta(days=data['inspectionDueInDays'])
+                inspection_date: datetime = captured_at + inspection_due
+                inspection_date = inspection_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                # pylint: disable-next=protected-access
+                vehicle.maintenance.inspection_due_at._set_value(value=inspection_date, measured=captured_at)
+            else:
+                vehicle.maintenance.inspection_due_at._set_value(None)  # pylint: disable=protected-access
+            log_extra_keys(LOG_API, 'maintenance', data,  {'capturedAt', 'mileageInKm', 'inspectionDueInDays'})
+
+        #url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-health-report/warning-lights/{vin}'
+        #data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
+        #{'capturedAt': '2025-02-24T15:32:35.032Z', 'mileageInKm': 2512, 'warningLights': [{'category': 'ASSISTANCE', 'defects': []}, {'category': 'COMFORT', 'defects': []}, {'category': 'BRAKE', 'defects': []}, {'category': 'ELECTRIC_ENGINE', 'defects': []}, {'category': 'LIGHTING', 'defects': []}, {'category': 'TIRE', 'defects': []}, {'category': 'OTHER', 'defects': []}]}
         return vehicle
 
     def fetch_air_conditioning(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

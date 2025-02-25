@@ -1336,10 +1336,20 @@ class Connector(BaseConnector):
             raise SetterError(f'Unknown temperature unit {temperature_attribute.unit}')
 
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/settings/target-temperature'
-        settings_response: requests.Response = self.session.post(url, data=json.dumps(setting_dict), allow_redirects=True)
-        if settings_response.status_code != requests.codes['accepted']:
-            LOG.error('Could not set target temperature (%s)', settings_response.status_code)
-            raise SetterError(f'Could not set value ({settings_response.status_code})')
+        try:
+            settings_response: requests.Response = self.session.post(url, data=json.dumps(setting_dict), allow_redirects=True)
+            if settings_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not set target temperature (%s)', settings_response.status_code)
+                raise SetterError(f'Could not set value ({settings_response.status_code})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise SetterError(f'Connection error: {connection_error}.'
+                              ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise SetterError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise SetterError(f'Retrying failed: {retry_error}') from retry_error
         return target_temperature
 
     def __on_air_conditioning_at_unlock_change(self, at_unlock_attribute: BooleanAttribute, at_unlock_value: bool) -> bool:
@@ -1355,10 +1365,20 @@ class Connector(BaseConnector):
         setting_dict['airConditioningAtUnlockEnabled'] = at_unlock_value
 
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/settings/ac-at-unlock'
-        settings_response: requests.Response = self.session.post(url, data=json.dumps(setting_dict), allow_redirects=True)
-        if settings_response.status_code != requests.codes['accepted']:
-            LOG.error('Could not set air conditioning at unlock (%s)', settings_response.status_code)
-            raise SetterError(f'Could not set value ({settings_response.status_code})')
+        try:
+            settings_response: requests.Response = self.session.post(url, data=json.dumps(setting_dict), allow_redirects=True)
+            if settings_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not set air conditioning at unlock (%s)', settings_response.status_code)
+                raise SetterError(f'Could not set value ({settings_response.status_code})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise SetterError(f'Connection error: {connection_error}.'
+                                ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise SetterError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise SetterError(f'Retrying failed: {retry_error}') from retry_error
         return at_unlock_value
 
     def __on_air_conditioning_window_heating_change(self, window_heating_attribute: BooleanAttribute, window_heating_value: bool) -> bool:
@@ -1374,10 +1394,20 @@ class Connector(BaseConnector):
         setting_dict['windowHeatingEnabled'] = window_heating_value
 
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/settings/ac-at-unlock'
-        settings_response: requests.Response = self.session.post(url, data=json.dumps(setting_dict), allow_redirects=True)
-        if settings_response.status_code != requests.codes['accepted']:
-            LOG.error('Could not set air conditioning window heating (%s)', settings_response.status_code)
-            raise SetterError(f'Could not set value ({settings_response.status_code})')
+        try:
+            settings_response: requests.Response = self.session.post(url, data=json.dumps(setting_dict), allow_redirects=True)
+            if settings_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not set air conditioning window heating (%s)', settings_response.status_code)
+                raise SetterError(f'Could not set value ({settings_response.status_code})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise SetterError(f'Connection error: {connection_error}.'
+                                ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise SetterError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise SetterError(f'Retrying failed: {retry_error}') from retry_error
         return window_heating_value
 
     def __on_air_conditioning_start_stop(self, start_stop_command: ClimatizationStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
@@ -1394,53 +1424,63 @@ class Connector(BaseConnector):
         if 'command' not in command_arguments:
             raise CommandError('Command argument missing')
         command_dict = {}
-        if command_arguments['command'] == ClimatizationStartStopCommand.Command.START:
-            command_dict['heaterSource'] = 'ELECTRIC'
-            command_dict['targetTemperature'] = {}
-            if 'target_temperature' in command_arguments:
-                # Round target temperature to nearest 0.5
-                command_dict['targetTemperature']['temperatureValue'] = round(command_arguments['target_temperature'] * 2) / 2
-                if 'target_temperature_unit' in command_arguments:
-                    if not isinstance(command_arguments['target_temperature_unit'], Temperature):
-                        raise CommandError('Temperature unit is not of type Temperature')
-                    if command_arguments['target_temperature_unit'] == Temperature.C:
+        try:
+            if command_arguments['command'] == ClimatizationStartStopCommand.Command.START:
+                command_dict['heaterSource'] = 'ELECTRIC'
+                command_dict['targetTemperature'] = {}
+                if 'target_temperature' in command_arguments:
+                    # Round target temperature to nearest 0.5
+                    command_dict['targetTemperature']['temperatureValue'] = round(command_arguments['target_temperature'] * 2) / 2
+                    if 'target_temperature_unit' in command_arguments:
+                        if not isinstance(command_arguments['target_temperature_unit'], Temperature):
+                            raise CommandError('Temperature unit is not of type Temperature')
+                        if command_arguments['target_temperature_unit'] == Temperature.C:
+                            command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
+                        elif command_arguments['target_temperature_unit'] == Temperature.F:
+                            command_dict['targetTemperature']['unitInCar'] = 'FAHRENHEIT'
+                        elif command_arguments['target_temperature_unit'] == Temperature.K:
+                            command_dict['targetTemperature']['unitInCar'] = 'KELVIN'
+                        else:
+                            raise CommandError(f'Unknown temperature unit {command_arguments["target_temperature_unit"]}')
+                    else:
                         command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
-                    elif command_arguments['target_temperature_unit'] == Temperature.F:
+                elif start_stop_command.parent is not None and (climatization := start_stop_command.parent.parent) is not None \
+                        and isinstance(climatization, Climatization) and climatization.settings is not None \
+                        and climatization.settings.target_temperature is not None and climatization.settings.target_temperature.enabled \
+                        and climatization.settings.target_temperature.value is not None:  # pylint: disable=too-many-boolean-expressions
+                    # Round target temperature to nearest 0.5
+                    command_dict['targetTemperature']['temperatureValue'] = round(climatization.settings.target_temperature.value * 2) / 2
+                    if climatization.settings.target_temperature.unit == Temperature.C:
+                        command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
+                    elif climatization.settings.target_temperature.unit == Temperature.F:
                         command_dict['targetTemperature']['unitInCar'] = 'FAHRENHEIT'
-                    elif command_arguments['target_temperature_unit'] == Temperature.K:
+                    elif climatization.settings.target_temperature.unit == Temperature.K:
                         command_dict['targetTemperature']['unitInCar'] = 'KELVIN'
                     else:
-                        raise CommandError(f'Unknown temperature unit {command_arguments["target_temperature_unit"]}')
+                        raise CommandError(f'Unknown temperature unit {climatization.settings.target_temperature.unit}')
                 else:
+                    command_dict['targetTemperature']['temperatureValue'] = 25.0
                     command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
-            elif start_stop_command.parent is not None and (climatization := start_stop_command.parent.parent) is not None \
-                    and isinstance(climatization, Climatization) and climatization.settings is not None \
-                    and climatization.settings.target_temperature is not None and climatization.settings.target_temperature.enabled \
-                    and climatization.settings.target_temperature.value is not None:  # pylint: disable=too-many-boolean-expressions
-                # Round target temperature to nearest 0.5
-                command_dict['targetTemperature']['temperatureValue'] = round(climatization.settings.target_temperature.value * 2) / 2
-                if climatization.settings.target_temperature.unit == Temperature.C:
-                    command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
-                elif climatization.settings.target_temperature.unit == Temperature.F:
-                    command_dict['targetTemperature']['unitInCar'] = 'FAHRENHEIT'
-                elif climatization.settings.target_temperature.unit == Temperature.K:
-                    command_dict['targetTemperature']['unitInCar'] = 'KELVIN'
-                else:
-                    raise CommandError(f'Unknown temperature unit {climatization.settings.target_temperature.unit}')
+                url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/start'
+                command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+            elif command_arguments['command'] == ClimatizationStartStopCommand.Command.STOP:
+                url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/stop'
+                command_response: requests.Response = self.session.post(url, allow_redirects=True)
             else:
-                command_dict['targetTemperature']['temperatureValue'] = 25.0
-                command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
-            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/start'
-            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
-        elif command_arguments['command'] == ClimatizationStartStopCommand.Command.STOP:
-            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/stop'
-            command_response: requests.Response = self.session.post(url, allow_redirects=True)
-        else:
-            raise CommandError(f'Unknown command {command_arguments["command"]}')
+                raise CommandError(f'Unknown command {command_arguments["command"]}')
 
-        if command_response.status_code != requests.codes['accepted']:
-            LOG.error('Could not start/stop air conditioning (%s: %s)', command_response.status_code, command_response.text)
-            raise CommandError(f'Could not start/stop air conditioning ({command_response.status_code}: {command_response.text})')
+            if command_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not start/stop air conditioning (%s: %s)', command_response.status_code, command_response.text)
+                raise CommandError(f'Could not start/stop air conditioning ({command_response.status_code}: {command_response.text})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise CommandError(f'Connection error: {connection_error}.'
+                               ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments
 
     def __on_charging_start_stop(self, start_stop_command: ChargingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
@@ -1456,18 +1496,29 @@ class Connector(BaseConnector):
             raise CommandError('VIN in object hierarchy missing')
         if 'command' not in command_arguments:
             raise CommandError('Command argument missing')
-        if command_arguments['command'] == ChargingStartStopCommand.Command.START:
-            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/start'
-            command_response: requests.Response = self.session.post(url, allow_redirects=True)
-        elif command_arguments['command'] == ChargingStartStopCommand.Command.STOP:
-            url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/stop'
-            command_response: requests.Response = self.session.post(url, allow_redirects=True)
-        else:
-            raise CommandError(f'Unknown command {command_arguments["command"]}')
+        try:
+            if command_arguments['command'] == ChargingStartStopCommand.Command.START:
+                url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/start'
+                command_response: requests.Response = self.session.post(url, allow_redirects=True)
+            elif command_arguments['command'] == ChargingStartStopCommand.Command.STOP:
+                url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/stop'
+                
+                command_response: requests.Response = self.session.post(url, allow_redirects=True)
+            else:
+                raise CommandError(f'Unknown command {command_arguments["command"]}')
 
-        if command_response.status_code != requests.codes['accepted']:
-            LOG.error('Could not start/stop charging (%s: %s)', command_response.status_code, command_response.text)
-            raise CommandError(f'Could not start/stop charging ({command_response.status_code}: {command_response.text})')
+            if command_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not start/stop charging (%s: %s)', command_response.status_code, command_response.text)
+                raise CommandError(f'Could not start/stop charging ({command_response.status_code}: {command_response.text})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise CommandError(f'Connection error: {connection_error}.'
+                               ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments
 
     def __on_honk_flash(self, honk_flash_command: HonkAndFlashCommand, command_arguments: Union[str, Dict[str, Any]]) \
@@ -1497,10 +1548,20 @@ class Connector(BaseConnector):
             command_dict['vehiclePosition']['longitude'] = vehicle.position.longitude.value
 
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-access/{vin}/honk-and-flash'
-            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
-            if command_response.status_code != requests.codes['accepted']:
-                LOG.error('Could not execute honk or flash command (%s: %s)', command_response.status_code, command_response.text)
-                raise CommandError(f'Could not execute honk or flash command ({command_response.status_code}: {command_response.text})')
+            try:
+                command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+                if command_response.status_code != requests.codes['accepted']:
+                    LOG.error('Could not execute honk or flash command (%s: %s)', command_response.status_code, command_response.text)
+                    raise CommandError(f'Could not execute honk or flash command ({command_response.status_code}: {command_response.text})')
+            except requests.exceptions.ConnectionError as connection_error:
+                raise CommandError(f'Connection error: {connection_error}.'
+                                   ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+            except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+                raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+            except requests.exceptions.ReadTimeout as timeout_error:
+                raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
+            except requests.exceptions.RetryError as retry_error:
+                raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         else:
             raise CommandError(f'Unknown command {command_arguments["command"]}')
         return command_arguments
@@ -1531,10 +1592,20 @@ class Connector(BaseConnector):
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-access/{vin}/unlock'
         else:
             raise CommandError(f'Unknown command {command_arguments["command"]}')
-        command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
-        if command_response.status_code != requests.codes['accepted']:
-            LOG.error('Could not execute locking command (%s: %s)', command_response.status_code, command_response.text)
-            raise CommandError(f'Could not execute locking command ({command_response.status_code}: {command_response.text})')
+        try:
+            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+            if command_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not execute locking command (%s: %s)', command_response.status_code, command_response.text)
+                raise CommandError(f'Could not execute locking command ({command_response.status_code}: {command_response.text})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise CommandError(f'Connection error: {connection_error}.'
+                                ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments
 
     def __on_wake_sleep(self, wake_sleep_command: WakeSleepCommand, command_arguments: Union[str, Dict[str, Any]]) \
@@ -1553,10 +1624,20 @@ class Connector(BaseConnector):
         if command_arguments['command'] == WakeSleepCommand.Command.WAKE:
             url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-wakeup/{vin}?applyRequestLimiter=true'
 
-            command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
-            if command_response.status_code != requests.codes['accepted']:
-                LOG.error('Could not execute wake command (%s: %s)', command_response.status_code, command_response.text)
-                raise CommandError(f'Could not execute wake command ({command_response.status_code}: {command_response.text})')
+            try:
+                command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
+                if command_response.status_code != requests.codes['accepted']:
+                    LOG.error('Could not execute wake command (%s: %s)', command_response.status_code, command_response.text)
+                    raise CommandError(f'Could not execute wake command ({command_response.status_code}: {command_response.text})')
+            except requests.exceptions.ConnectionError as connection_error:
+                raise CommandError(f'Connection error: {connection_error}.'
+                                   ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+            except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+                raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+            except requests.exceptions.ReadTimeout as timeout_error:
+                raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
+            except requests.exceptions.RetryError as retry_error:
+                raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         elif command_arguments['command'] == WakeSleepCommand.Command.SLEEP:
             raise CommandError('Sleep command not supported by vehicle. Vehicle will put itself to sleep')
         else:
@@ -1583,10 +1664,20 @@ class Connector(BaseConnector):
             url = 'https://mysmob.api.connect.skoda-auto.cz/api/v1/spin/verify'
         else:
             raise CommandError(f'Unknown command {command_arguments["command"]}')
-        command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
-        if command_response.status_code != requests.codes['ok']:
-            LOG.error('Could not execute spin command (%s: %s)', command_response.status_code, command_response.text)
-            raise CommandError(f'Could not execute spin command ({command_response.status_code}: {command_response.text})')
-        else:
-            LOG.info('Spin verify command executed successfully')
+        try:
+            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+            if command_response.status_code != requests.codes['ok']:
+                LOG.error('Could not execute spin command (%s: %s)', command_response.status_code, command_response.text)
+                raise CommandError(f'Could not execute spin command ({command_response.status_code}: {command_response.text})')
+            else:
+                LOG.info('Spin verify command executed successfully')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise CommandError(f'Connection error: {connection_error}.'
+                               ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments

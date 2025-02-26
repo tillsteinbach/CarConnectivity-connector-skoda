@@ -22,7 +22,7 @@ from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
-from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute
+from carconnectivity.attributes import GenericAttribute, BooleanAttribute, DurationAttribute, TemperatureAttribute
 from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
@@ -81,6 +81,16 @@ class Connector(BaseConnector):
 
         self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self, tags={'connector_custom'})
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
+
+        def __check_interval(attribute: GenericAttribute, value: Any) -> Any:
+            del attribute
+            if value is not None and value < timedelta(seconds=180):
+                raise ValueError('Intervall must be at least 180 seconds')
+            return value
+
+        self.interval._is_changeable = True  # pylint: disable=protected-access
+        self.interval._add_on_set_hook(__check_interval)  # pylint: disable=protected-access
+
         self.commands: Commands = Commands(parent=self)
 
         self.user_id: Optional[str] = None

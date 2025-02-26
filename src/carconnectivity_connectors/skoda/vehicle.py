@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionVehicle, HybridVehicle
 from carconnectivity.charging import Charging
+from carconnectivity.attributes import BooleanAttribute
 
 from carconnectivity_connectors.skoda.capability import Capabilities
 from carconnectivity_connectors.skoda.charging import SkodaCharging
@@ -32,6 +33,8 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
             super().__init__(origin=origin)
             self.capabilities: Capabilities = origin.capabilities
             self.capabilities.parent = self
+            self.in_motion: BooleanAttribute = origin.in_motion
+            self.in_motion.parent = self
             if SUPPORT_IMAGES:
                 self._car_images = origin._car_images
 
@@ -39,6 +42,7 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
             self.climatization = SkodaClimatization(vehicle=self, origin=self.climatization)
             self.capabilities = Capabilities(vehicle=self)
+            self.in_motion = BooleanAttribute(name='in_motion', parent=self, tags={'connector_custom'})
             if SUPPORT_IMAGES:
                 self._car_images: Dict[str, Image.Image] = {}
         self.manufacturer._set_value(value='Škoda')  # pylint: disable=protected-access

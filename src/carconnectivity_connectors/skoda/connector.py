@@ -339,6 +339,8 @@ class Connector(BaseConnector):
                 vehicle_to_update = self.fetch_vehicle_status(vehicle_to_update)
                 vehicle_to_update = self.fetch_driving_range(vehicle_to_update)
                 if vehicle_to_update.capabilities is not None and vehicle_to_update.capabilities.enabled:
+                    if vehicle_to_update.capabilities.has_capability('READINESS'):
+                        vehicle_to_update = self.fetch_connection_status(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('PARKING_POSITION'):
                         vehicle_to_update = self.fetch_position(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('CHARGING') and isinstance(vehicle_to_update, SkodaElectricVehicle):
@@ -347,6 +349,27 @@ class Connector(BaseConnector):
                         vehicle_to_update = self.fetch_air_conditioning(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('VEHICLE_HEALTH_INSPECTION'):
                         vehicle_to_update = self.fetch_maintenance(vehicle_to_update)
+                vehicle_to_update = self.decide_state(vehicle_to_update)
+
+    def decide_state(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+        """
+        Decides the state of the vehicle based on the current data.
+
+        Args:
+            vehicle (SkodaVehicle): The Skoda vehicle object.
+
+        Returns:
+            SkodaVehicle: The Skoda vehicle object with the updated state.
+        """
+        if vehicle is not None:
+            if vehicle.in_motion is not None and vehicle.in_motion.enabled and vehicle.in_motion.value:
+                vehicle.state._set_value(GenericVehicle.State.IGNITION_ON)  # pylint: disable=protected-access
+            elif vehicle.position is not None and vehicle.position.enabled and vehicle.position.position_type is not None \
+                    and vehicle.position.position_type.enabled and vehicle.position.position_type.value == Position.PositionType.PARKING:
+                vehicle.state._set_value(GenericVehicle.State.PARKED)  # pylint: disable=protected-access
+            else:
+                vehicle.state._set_value(None)  # pylint: disable=protected-access
+        return vehicle
 
     def fetch_charging(self, vehicle: SkodaElectricVehicle, no_cache: bool = False) -> SkodaElectricVehicle:
         """
@@ -554,6 +577,41 @@ class Connector(BaseConnector):
                 if isinstance(vehicle.charging, SkodaCharging):
                     vehicle.charging.errors.clear()
             log_extra_keys(LOG_API, 'charging data', data,  {'carCapturedTimestamp', 'status', 'isVehicleInSavedLocation', 'errors', 'settings'})
+        return vehicle
+    
+    def fetch_connection_status(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
+        """
+        Fetches the connection status of the given Skoda vehicle and updates its connection attributes.
+
+        Args:
+            vehicle (SkodaVehicle): The Skoda vehicle object containing the VIN and connection attributes.
+
+        Returns:
+            SkodaVehicle: The updated Skoda vehicle object with the fetched connection data.
+
+        Raises:
+            APIError: If the VIN is missing.
+            ValueError: If the vehicle has no connection object.
+        """
+        vin = vehicle.vin.value
+        if vin is None:
+            raise APIError('VIN is missing')
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/connection-status/{vin}/readiness'
+        data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
+        #  {'unreachable': False, 'inMotion': False, 'batteryProtectionLimitOn': False}
+        if data is not None:
+            if 'unreachable' in data and data['unreachable'] is not None:
+                if data['unreachable']:
+                    vehicle.connection_state._set_value(vehicle.ConnectionState.OFFLINE)  # pylint: disable=protected-access
+                else:
+                    vehicle.connection_state._set_value(vehicle.ConnectionState.REACHABLE)  # pylint: disable=protected-access
+            else:
+                vehicle.connection_state._set_value(None)  # pylint: disable=protected-access
+            if 'inMotion' in data and data['inMotion'] is not None:
+                vehicle.in_motion._set_value(data['inMotion'])  # pylint: disable=protected-access
+            else:
+                vehicle.in_motion._set_value(None)  # pylint: disable=protected-access
+            log_extra_keys(LOG_API, 'connection status', data,  {'unreachable'})
         return vehicle
 
     def fetch_position(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

@@ -154,9 +154,11 @@ class Connector(BaseConnector):
         self._stop_event.clear()
         # Start background thread for Rest API polling
         self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
+        self._background_thread.name = 'carconnectivity.connectors.skoda-background'
         self._background_thread.start()
         # Start background thread for MQTT connection
         self._background_connect_thread = threading.Thread(target=self._background_connect_loop, daemon=False)
+        self._background_connect_thread.name = 'carconnectivity.connectors.skoda-background_connect'
         self._background_connect_thread.start()
         # Start MQTT thread
         self._mqtt_client.loop_start()

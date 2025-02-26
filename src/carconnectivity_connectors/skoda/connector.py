@@ -236,12 +236,12 @@ class Connector(BaseConnector):
                 self.car_connectivity.garage.remove_vehicle(vehicle.id)
                 vehicle.enabled = False
         self._stop_event.set()
+        self.session.close()
         if self._background_thread is not None:
             self._background_thread.join()
         if self._background_connect_thread is not None:
             self._background_connect_thread.join()
         self.persist()
-        self.session.close()
         return super().shutdown()
 
     def fetch_all(self) -> None:

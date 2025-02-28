@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import threading
 import os
+import traceback
 import logging
 import netrc
 from datetime import datetime, timedelta, timezone
@@ -72,6 +73,7 @@ class Connector(BaseConnector):
     """
     def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict) -> None:
         BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config, log=LOG, api_log=LOG_API)
+        self._healthy = False
 
         self._mqtt_client: SkodaMQTTClient = SkodaMQTTClient(skoda_connector=self)
 
@@ -172,6 +174,7 @@ class Connector(BaseConnector):
         self._background_connect_thread.start()
         # Start MQTT thread
         self._mqtt_client.loop_start()
+        self._healthy = True
 
     def _background_connect_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -216,6 +219,10 @@ class Connector(BaseConnector):
             except TemporaryAuthenticationError as err:
                 LOG.error('Temporary authentification error during update (%s). Will try again after configured interval of %ss', str(err), interval)
                 self._stop_event.wait(interval)
+            except Exception as err:
+                LOG.critical('Critical error during update: %s', traceback.format_exc())
+                self._healthy = False
+                raise err
             else:
                 self._stop_event.wait(interval)
 
@@ -1751,3 +1758,6 @@ class Connector(BaseConnector):
         except requests.exceptions.RetryError as retry_error:
             raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments
+
+    def is_healthy(self) -> bool:
+        return self._healthy and super().is_healthy()

@@ -793,12 +793,19 @@ class Connector(BaseConnector):
                 # pylint: disable-next=protected-access
                 vehicle.climatization.settings.target_temperature._add_on_set_hook(self.__on_air_conditioning_target_temperature_change)
                 vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
+                precision: float = 0.5
+                min_temperature: Optional[float] = None
+                max_temperature: Optional[float] = None
                 unit: Temperature = Temperature.UNKNOWN
                 if 'unitInCar' in data['targetTemperature'] and data['targetTemperature']['unitInCar'] is not None:
                     if data['targetTemperature']['unitInCar'] == 'CELSIUS':
                         unit = Temperature.C
+                        min_temperature: Optional[float] = 16
+                        max_temperature: Optional[float] = 29.5
                     elif data['targetTemperature']['unitInCar'] == 'FAHRENHEIT':
                         unit = Temperature.F
+                        min_temperature: Optional[float] = 61
+                        max_temperature: Optional[float] = 85
                     elif data['targetTemperature']['unitInCar'] == 'KELVIN':
                         unit = Temperature.K
                     else:
@@ -808,6 +815,10 @@ class Connector(BaseConnector):
                     vehicle.climatization.settings.target_temperature._set_value(value=data['targetTemperature']['temperatureValue'],
                                                                                  measured=captured_at,
                                                                                  unit=unit)
+                    vehicle.climatization.settings.target_temperature.precision = precision
+                    vehicle.climatization.settings.target_temperature.minimum = min_temperature
+                    vehicle.climatization.settings.target_temperature.maximum = max_temperature
+
                 else:
                     # pylint: disable-next=protected-access
                     vehicle.climatization.settings.target_temperature._set_value(value=None, measured=captured_at, unit=unit)
@@ -1505,9 +1516,10 @@ class Connector(BaseConnector):
             if command_arguments['command'] == ClimatizationStartStopCommand.Command.START:
                 command_dict['heaterSource'] = 'ELECTRIC'
                 command_dict['targetTemperature'] = {}
+                precision: float = 0.5
                 if 'target_temperature' in command_arguments:
                     # Round target temperature to nearest 0.5
-                    command_dict['targetTemperature']['temperatureValue'] = round(command_arguments['target_temperature'] * 2) / 2
+                    command_dict['targetTemperature']['temperatureValue'] = round(command_arguments['target_temperature'] / precision) * precision
                     if 'target_temperature_unit' in command_arguments:
                         if not isinstance(command_arguments['target_temperature_unit'], Temperature):
                             raise CommandError('Temperature unit is not of type Temperature')
@@ -1525,8 +1537,10 @@ class Connector(BaseConnector):
                         and isinstance(climatization, Climatization) and climatization.settings is not None \
                         and climatization.settings.target_temperature is not None and climatization.settings.target_temperature.enabled \
                         and climatization.settings.target_temperature.value is not None:  # pylint: disable=too-many-boolean-expressions
+                    if climatization.settings.target_temperature.precision is not None:
+                        precision = climatization.settings.target_temperature.precision
                     # Round target temperature to nearest 0.5
-                    command_dict['targetTemperature']['temperatureValue'] = round(climatization.settings.target_temperature.value * 2) / 2
+                    command_dict['targetTemperature']['temperatureValue'] = round(climatization.settings.target_temperature.value / precision) * precision
                     if climatization.settings.target_temperature.unit == Temperature.C:
                         command_dict['targetTemperature']['unitInCar'] = 'CELSIUS'
                     elif climatization.settings.target_temperature.unit == Temperature.F:

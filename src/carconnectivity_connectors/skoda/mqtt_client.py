@@ -469,7 +469,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                         if 'data' in data and data['data'] is not None:
                             vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
                             if isinstance(vehicle, SkodaElectricVehicle):
-                                electric_drive: ElectricDrive = vehicle.get_electric_drive()
+                                electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
                                 if electric_drive is not None:
                                     charging_state: Optional[Charging.ChargingState] = vehicle.charging.state.value
                                     old_charging_state: Optional[Charging.ChargingState] = charging_state
@@ -509,6 +509,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     if old_charging_state != charging_state:
                                         try:
                                             self._skoda_connector.fetch_charging(vehicle, no_cache=True)
+                                            self._skoda_connector.car_connectivity.transaction_end()
                                         except CarConnectivityError as e:
                                             LOG.error('Error while fetching charging: %s', e)
                                 if 'timeToFinish' in data['data'] and data['data']['timeToFinish'] is not None \
@@ -536,6 +537,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                             if isinstance(vehicle, SkodaVehicle):
                                 try:
                                     self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
+                                    self._skoda_connector.car_connectivity.transaction_end()
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching air conditioning: %s', e)
                     elif 'name' in data and data['name'] == 'climatisation-completed':
@@ -582,6 +584,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                             self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
                                         except CarConnectivityError as e:
                                             LOG.error('Error while fetching air conditioning: %s', e)
+                                    self._skoda_connector.car_connectivity.transaction_end()
 
                                 if vin in self.delayed_access_function_timers:
                                     self.delayed_access_function_timers[vin].cancel()
@@ -598,6 +601,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                             if isinstance(vehicle, SkodaVehicle):
                                 try:
                                     self._skoda_connector.fetch_vehicle_status(vehicle, no_cache=True)
+                                    self._skoda_connector.car_connectivity.transaction_end()
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching vehicle status: %s', e)
 
@@ -629,6 +633,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                 LOG.debug('Received %s operation request for vehicle %s from user %s', operation_request, vin, user_id)
                                 try:
                                     self._skoda_connector.fetch_air_conditioning(vehicle, no_cache=True)
+                                    self._skoda_connector.car_connectivity.transaction_end()
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching air-conditioning: %s', e)
                                 return
@@ -649,6 +654,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                 LOG.debug('Received %s operation request for vehicle %s from user %s', operation_request, vin, user_id)
                                 try:
                                     self._skoda_connector.fetch_charging(vehicle, no_cache=True)
+                                    self._skoda_connector.car_connectivity.transaction_end()
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching charging: %s', e)
                                 return

@@ -23,13 +23,14 @@ from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
-from carconnectivity.attributes import GenericAttribute, BooleanAttribute, DurationAttribute, TemperatureAttribute
+from carconnectivity.attributes import GenericAttribute, BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute
 from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
 from carconnectivity.charging_connector import ChargingConnector
 from carconnectivity.commands import Commands
 from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand, HonkAndFlashCommand, LockUnlockCommand, WakeSleepCommand
+from carconnectivity.enums import ConnectionState
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -73,7 +74,6 @@ class Connector(BaseConnector):
     """
     def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict) -> None:
         BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config, log=LOG, api_log=LOG_API)
-        self._healthy = False
 
         self._mqtt_client: SkodaMQTTClient = SkodaMQTTClient(skoda_connector=self)
 
@@ -81,7 +81,8 @@ class Connector(BaseConnector):
         self._background_connect_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
-        self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self, tags={'connector_custom'})
+        self.connection_state: EnumAttribute = EnumAttribute(name="connection_state", parent=self, value_type=ConnectionState,
+                                                             value=ConnectionState.DISCONNECTED, tags={'connector_custom'})
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
         self.interval.minimum = timedelta(seconds=180)
         self.interval._is_changeable = True  # pylint: disable=protected-access
@@ -167,7 +168,7 @@ class Connector(BaseConnector):
         self._background_connect_thread.start()
         # Start MQTT thread
         self._mqtt_client.loop_start()
-        self._healthy = True
+        self.healthy._set_value(value=True)  # pylint: disable=protected-access
 
     def _background_connect_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -181,6 +182,7 @@ class Connector(BaseConnector):
     def _background_loop(self) -> None:
         self._stop_event.clear()
         fetch: bool = True
+        self.connection_state._set_value(value=ConnectionState.CONNECTING)  # pylint: disable=protected-access
         while not self._stop_event.is_set():
             interval = 300
             try:
@@ -214,7 +216,7 @@ class Connector(BaseConnector):
                 self._stop_event.wait(interval)
             except Exception as err:
                 LOG.critical('Critical error during update: %s', traceback.format_exc())
-                self._healthy = False
+                self.healthy._set_value(value=False)  # pylint: disable=protected-access
                 raise err
             else:
                 self._stop_event.wait(interval)
@@ -1769,5 +1771,5 @@ class Connector(BaseConnector):
             raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments
 
-    def is_healthy(self) -> bool:
-        return self._healthy and super().is_healthy()
+    def get_name(self) -> str:
+        return "Skoda Connector"

@@ -83,6 +83,8 @@ class Connector(BaseConnector):
 
         self.connection_state: EnumAttribute = EnumAttribute(name="connection_state", parent=self, value_type=ConnectionState,
                                                              value=ConnectionState.DISCONNECTED, tags={'connector_custom'})
+        self.rest_connected: bool = False
+        self.mqtt_connected: bool = False
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
         self.interval.minimum = timedelta(seconds=180)
         self.interval._is_changeable = True  # pylint: disable=protected-access
@@ -201,25 +203,43 @@ class Connector(BaseConnector):
                     raise
             except TooManyRequestsError as err:
                 LOG.error('Retrieval error during update. Too many requests from your account (%s). Will try again after 15 minutes', str(err))
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
+                self.rest_connected = False
                 self._stop_event.wait(900)
             except RetrievalError as err:
                 LOG.error('Retrieval error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
+                self.rest_connected = False
                 self._stop_event.wait(interval)
             except APIError as err:
                 LOG.error('API error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
+                self.rest_connected = False
                 self._stop_event.wait(interval)
             except APICompatibilityError as err:
                 LOG.error('API compatability error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
+                self.rest_connected = False
                 self._stop_event.wait(interval)
             except TemporaryAuthenticationError as err:
                 LOG.error('Temporary authentification error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
+                self.rest_connected = False
                 self._stop_event.wait(interval)
             except Exception as err:
                 LOG.critical('Critical error during update: %s', traceback.format_exc())
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
+                self.rest_connected = False
                 self.healthy._set_value(value=False)  # pylint: disable=protected-access
                 raise err
             else:
+                self.rest_connected = True
+                if self.mqtt_connected:
+                    self.connection_state._set_value(value=ConnectionState.CONNECTED)  # pylint: disable=protected-access
                 self._stop_event.wait(interval)
+        # When leaving the loop, set the connection state to disconnected
+        self.connection_state._set_value(value=ConnectionState.DISCONNECTED)  # pylint: disable=protected-access
+        self.rest_connected = False
 
     def persist(self) -> None:
         """

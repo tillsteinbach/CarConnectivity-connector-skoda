@@ -22,6 +22,7 @@ from carconnectivity.util import robust_time_parse, log_extra_keys
 from carconnectivity.charging import Charging
 from carconnectivity.climatization import Climatization
 from carconnectivity.units import Speed, Power, Length
+from carconnectivity.enums import ConnectionState
 
 from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
@@ -77,6 +78,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         Returns:
             MQTTErrorCode: The result of the connection attempt.
         """
+        self._skoda_connector.connection_state._set_value(value=ConnectionState.CONNECTING)  # pylint: disable=protected-access
         return super().connect(*args, host='mqtt.messagehub.de', port=8883, keepalive=60, **kwargs)
 
     def _on_pre_connect_callback(self, client: Client, userdata: Any) -> None:
@@ -312,7 +314,9 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         # reason_code 0 means success
         if reason_code == 0:
             LOG.info('Connected to Skoda MQTT server')
-            self._skoda_connector.connected._set_value(value=True)  # pylint: disable=protected-access
+            if self._skoda_connector.rest_connected:
+                self._skoda_connector.connection_state._set_value(value=ConnectionState.CONNECTED)  # pylint: disable=protected-access
+            self._skoda_connector.mqtt_connected = True
             observer_flags: Observable.ObserverEvent = Observable.ObserverEvent.ENABLED | Observable.ObserverEvent.DISABLED
             self._skoda_connector.car_connectivity.garage.add_observer(observer=self._on_carconnectivity_vehicle_enabled,
                                                                        flag=observer_flags,
@@ -385,7 +389,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         del properties
         del flags
 
-        self._skoda_connector.connected._set_value(value=False)  # pylint: disable=protected-access
+        self._skoda_connector.connection_state._set_value(value=ConnectionState.DISCONNECTED)  # pylint: disable=protected-access
+        self._skoda_connector.mqtt_connected = False
         self._skoda_connector.car_connectivity.garage.remove_observer(observer=self._on_carconnectivity_vehicle_enabled)
 
         self.subscribed_topics.clear()

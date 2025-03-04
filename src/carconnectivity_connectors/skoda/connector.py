@@ -373,15 +373,15 @@ class Connector(BaseConnector):
                 vehicle_to_update = self.fetch_vehicle_status(vehicle_to_update)
                 vehicle_to_update = self.fetch_driving_range(vehicle_to_update)
                 if vehicle_to_update.capabilities is not None and vehicle_to_update.capabilities.enabled:
-                    if vehicle_to_update.capabilities.has_capability('READINESS'):
+                    if vehicle_to_update.capabilities.has_capability('READINESS', check_status_ok=True):
                         vehicle_to_update = self.fetch_connection_status(vehicle_to_update)
-                    if vehicle_to_update.capabilities.has_capability('PARKING_POSITION'):
+                    if vehicle_to_update.capabilities.has_capability('PARKING_POSITION', check_status_ok=True):
                         vehicle_to_update = self.fetch_position(vehicle_to_update)
-                    if vehicle_to_update.capabilities.has_capability('CHARGING') and isinstance(vehicle_to_update, SkodaElectricVehicle):
+                    if vehicle_to_update.capabilities.has_capability('CHARGING', check_status_ok=True) and isinstance(vehicle_to_update, SkodaElectricVehicle):
                         vehicle_to_update = self.fetch_charging(vehicle_to_update)
-                    if vehicle_to_update.capabilities.has_capability('AIR_CONDITIONING'):
+                    if vehicle_to_update.capabilities.has_capability('AIR_CONDITIONING', check_status_ok=True):
                         vehicle_to_update = self.fetch_air_conditioning(vehicle_to_update)
-                    if vehicle_to_update.capabilities.has_capability('VEHICLE_HEALTH_INSPECTION'):
+                    if vehicle_to_update.capabilities.has_capability('VEHICLE_HEALTH_INSPECTION', check_status_ok=True):
                         vehicle_to_update = self.fetch_maintenance(vehicle_to_update)
                 vehicle_to_update = self.decide_state(vehicle_to_update)
         self.car_connectivity.transaction_end()
@@ -1034,6 +1034,20 @@ class Connector(BaseConnector):
                             else:
                                 capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities)
                                 vehicle.capabilities.add_capability(capability_id, capability)
+                            if 'statuses' in capability_dict and capability_dict['statuses'] is not None:
+                                statuses = capability_dict['statuses']
+                                if isinstance(statuses, list):
+                                    for status in statuses:
+                                        if status in [item.name for item in Capability.Status]:
+                                            capability.status.value.append(Capability.Status[status])
+                                        else:
+                                            LOG_API.warning('Capability status unkown %s', status)
+                                            capability.status.value.append(Capability.Status.UNKNOWN)
+                                else:
+                                    LOG_API.warning('Capability status not a list in %s', statuses)
+                            else:
+                                capability.status.value.clear()
+                            log_extra_keys(LOG_API, 'capability', capability_dict, {'id', 'statuses'})
                         else:
                             raise APIError('Could not parse capability, id missing')
                     for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
@@ -1043,7 +1057,7 @@ class Connector(BaseConnector):
             else:
                 vehicle.capabilities.clear_capabilities()
 
-            if vehicle.capabilities.has_capability('VEHICLE_WAKE_UP_TRIGGER'):
+            if vehicle.capabilities.has_capability('VEHICLE_WAKE_UP_TRIGGER', check_status_ok=True):
                 if vehicle.commands is not None and vehicle.commands.commands is not None \
                         and not vehicle.commands.contains_command('wake-sleep'):
                     wake_sleep_command = WakeSleepCommand(parent=vehicle.commands)
@@ -1052,7 +1066,8 @@ class Connector(BaseConnector):
                     vehicle.commands.add_command(wake_sleep_command)
 
             # Add HONK_AND_FLASH command if necessary capabilities are available
-            if vehicle.capabilities.has_capability('HONK_AND_FLASH') and vehicle.capabilities.has_capability('PARKING_POSITION'):
+            if vehicle.capabilities.has_capability('HONK_AND_FLASH', check_status_ok=True) \
+                    and vehicle.capabilities.has_capability('PARKING_POSITION', check_status_ok=True):
                 if vehicle.commands is not None and vehicle.commands.commands is not None \
                         and not vehicle.commands.contains_command('honk-flash'):
                     honk_flash_command = HonkAndFlashCommand(parent=vehicle.commands)
@@ -1061,7 +1076,7 @@ class Connector(BaseConnector):
                     vehicle.commands.add_command(honk_flash_command)
 
             # Add lock and unlock command
-            if vehicle.capabilities.has_capability('ACCESS'):
+            if vehicle.capabilities.has_capability('ACCESS', check_status_ok=True):
                 if vehicle.doors is not None and vehicle.doors.commands is not None and vehicle.doors.commands.commands is not None \
                         and not vehicle.doors.commands.contains_command('lock-unlock'):
                     lock_unlock_command = LockUnlockCommand(parent=vehicle.doors.commands)

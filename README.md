@@ -1,6 +1,6 @@
 
 
-# CarConnectivity Connector for Volkswagen Vehicles
+# CarConnectivity Connector for Skoda Vehicles
 [![GitHub sourcecode](https://img.shields.io/badge/Source-GitHub-green)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/tillsteinbach/CarConnectivity-connector-skoda)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/latest)
 [![GitHub](https://img.shields.io/github/license/tillsteinbach/CarConnectivity-connector-skoda)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/blob/master/LICENSE)

@@ -646,7 +646,7 @@ class Connector(BaseConnector):
                 vehicle.in_motion._set_value(data['inMotion'])  # pylint: disable=protected-access
             else:
                 vehicle.in_motion._set_value(None)  # pylint: disable=protected-access
-            log_extra_keys(LOG_API, 'connection status', data,  {'unreachable'})
+            log_extra_keys(LOG_API, 'connection status', data,  {'unreachable', 'inMotion'})
         return vehicle
 
     def fetch_position(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

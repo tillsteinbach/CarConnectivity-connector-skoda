@@ -1182,6 +1182,8 @@ class Connector(BaseConnector):
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/vehicle-status/{vin}/driving-range'
         range_data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if range_data:
+            if 'carCapturedTimestamp' not in range_data or range_data['carCapturedTimestamp'] is None:
+                raise APIError('Could not fetch driving range, carCapturedTimestamp missing')
             captured_at: datetime = robust_time_parse(range_data['carCapturedTimestamp'])
             # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
             if 'carType' in range_data and range_data['carType'] is not None:

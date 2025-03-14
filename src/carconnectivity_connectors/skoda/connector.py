@@ -701,6 +701,10 @@ class Connector(BaseConnector):
                 vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
                 vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
                 vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+        else:
+            vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
+            vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+            vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
         return vehicle
 
     def fetch_maintenance(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

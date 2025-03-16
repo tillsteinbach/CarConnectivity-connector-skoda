@@ -29,8 +29,10 @@ from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
 from carconnectivity.charging_connector import ChargingConnector
 from carconnectivity.commands import Commands
-from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand, HonkAndFlashCommand, LockUnlockCommand, WakeSleepCommand
+from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand, HonkAndFlashCommand, LockUnlockCommand, WakeSleepCommand, \
+    WindowHeatingStartStopCommand
 from carconnectivity.enums import ConnectionState
+from carconnectivity.window_heating import WindowHeatings
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.session_manager import SessionManager, SessionUser, Service
@@ -973,7 +975,44 @@ class Connector(BaseConnector):
                     # pylint: disable-next=protected-access
                     vehicle.charging.connector.lock_state._set_value(value=None, measured=captured_at)
             if 'windowHeatingState' in data and data['windowHeatingState'] is not None:
-                pass
+                heating_on: bool = False
+                all_heating_invalid: bool = True
+                for window_id, state in data['windowHeatingState'].items():
+                    if window_id != 'unspecified':
+                        if window_id in vehicle.window_heatings.windows:
+                            window: WindowHeatings.WindowHeating = vehicle.window_heatings.windows[window_id]
+                        else:
+                            window = WindowHeatings.WindowHeating(window_id=window_id, window_heatings=vehicle.window_heatings)
+                            vehicle.window_heatings.windows[window_id] = window
+                        
+                        if state.lower() in [item.value for item in WindowHeatings.HeatingState]:
+                            window_heating_state: WindowHeatings.HeatingState = WindowHeatings.HeatingState(state.lower())
+                            if window_heating_state == WindowHeatings.HeatingState.ON:
+                                heating_on = True
+                            if window_heating_state in [WindowHeatings.HeatingState.ON,
+                                                        WindowHeatings.HeatingState.OFF]:
+                                all_heating_invalid = False
+                            window.heating_state._set_value(window_heating_state, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            LOG_API.info('Unknown window heating state %s not in %s', state.lower(), str(WindowHeatings.HeatingState))
+                            # pylint: disable-next=protected-access
+                            window.heating_state._set_value(WindowHeatings.HeatingState.UNKNOWN, measured=captured_at)
+                if all_heating_invalid:
+                    # pylint: disable-next=protected-access
+                    vehicle.window_heatings.heating_state._set_value(WindowHeatings.HeatingState.INVALID, measured=captured_at)
+                else:
+                    if heating_on:
+                        # pylint: disable-next=protected-access
+                        vehicle.window_heatings.heating_state._set_value(WindowHeatings.HeatingState.ON, measured=captured_at)
+                    else:
+                        # pylint: disable-next=protected-access
+                        vehicle.window_heatings.heating_state._set_value(WindowHeatings.HeatingState.OFF, measured=captured_at)
+                if vehicle.window_heatings is not None and vehicle.window_heatings.commands is not None \
+                        and not vehicle.window_heatings.commands.contains_command('start-stop'):
+                    start_stop_command = WindowHeatingStartStopCommand(parent=vehicle.window_heatings.commands)
+                    start_stop_command._add_on_set_hook(self.__on_window_heating_start_stop)  # pylint: disable=protected-access
+                    start_stop_command.enabled = True
+                    vehicle.window_heatings.commands.add_command(start_stop_command)
             if 'errors' in data and data['errors'] is not None:
                 found_errors: Set[str] = set()
                 if not isinstance(vehicle.climatization, SkodaClimatization):
@@ -1002,7 +1041,7 @@ class Connector(BaseConnector):
             log_extra_keys(LOG_API, 'air-condition', data,  {'carCapturedTimestamp', 'state', 'estimatedDateTimeToReachTargetTemperature',
                                                              'targetTemperature', 'outsideTemperature', 'chargerConnectionState',
                                                              'chargerLockState', 'airConditioningAtUnlock', 'steeringWheelPosition',
-                                                             'windowHeatingEnabled', 'seatHeatingActivated', 'errors'})
+                                                             'windowHeatingEnabled', 'seatHeatingActivated', 'windowHeatingState', 'errors'})
         return vehicle
 
     def fetch_vehicle_details(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
@@ -1801,6 +1840,44 @@ class Connector(BaseConnector):
                 raise CommandError(f'Could not execute spin command ({command_response.status_code}: {command_response.text})')
             else:
                 LOG.info('Spin verify command executed successfully')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise CommandError(f'Connection error: {connection_error}.'
+                               ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise CommandError(f'Retrying failed: {retry_error}') from retry_error
+        return command_arguments
+
+    def __on_window_heating_start_stop(self, start_stop_command: WindowHeatingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if start_stop_command.parent is None or start_stop_command.parent.parent is None \
+                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, SkodaVehicle):
+            raise CommandError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise CommandError('Command arguments are not a dictionary')
+        vehicle: SkodaVehicle = start_stop_command.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise CommandError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise CommandError('Command argument missing')
+        try:
+            if command_arguments['command'] == WindowHeatingStartStopCommand.Command.START:
+                url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/start-window-heating'
+                command_response: requests.Response = self.session.post(url, allow_redirects=True)
+            elif command_arguments['command'] == WindowHeatingStartStopCommand.Command.STOP:
+                url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/stop-window-heating'
+                
+                command_response: requests.Response = self.session.post(url, allow_redirects=True)
+            else:
+                raise CommandError(f'Unknown command {command_arguments["command"]}')
+
+            if command_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not start/stop window heating (%s: %s)', command_response.status_code, command_response.text)
+                raise CommandError(f'Could not start/stop window heating ({command_response.status_code}: {command_response.text})')
         except requests.exceptions.ConnectionError as connection_error:
             raise CommandError(f'Connection error: {connection_error}.'
                                ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error

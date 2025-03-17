@@ -522,12 +522,12 @@ class Connector(BaseConnector):
                 if 'maxChargeCurrentAc' in data['settings'] and data['settings']['maxChargeCurrentAc'] is not None \
                         and vehicle.charging is not None and vehicle.charging.settings is not None:
                     vehicle.charging.settings.maximum_current.minimum = 6.0
-                    vehicle.charging.settings.maximum_current.maximum = 11.0
+                    vehicle.charging.settings.maximum_current.maximum = 16.0
                     vehicle.charging.settings.maximum_current.precision = 1.0
                     vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_maximum_current_change)  # pylint: disable=protected-access
                     vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
                     if data['settings']['maxChargeCurrentAc'] == 'MAXIMUM':
-                        vehicle.charging.settings.maximum_current._set_value(value=11, measured=captured_at)  # pylint: disable=protected-access
+                        vehicle.charging.settings.maximum_current._set_value(value=16, measured=captured_at)  # pylint: disable=protected-access
                     elif data['settings']['maxChargeCurrentAc'] == 'REDUCED':
                         vehicle.charging.settings.maximum_current._set_value(value=6, measured=captured_at)  # pylint: disable=protected-access
                     else:
@@ -1957,12 +1957,12 @@ class Connector(BaseConnector):
         setting_dict = {}
         precision: float = current_attribute.precision if current_attribute.precision is not None else 1.0
         maximum_current = round(maximum_current / precision) * precision
-        if maximum_current < 11:
+        if maximum_current < 16:
             setting_dict['chargingCurrent'] = "REDUCED"
             maximum_current = 6.0
         else:
             setting_dict['chargingCurrent'] = "MAXIMUM"
-            maximum_current = 11.0
+            maximum_current = 16.0
 
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/set-charging-current'
         try:

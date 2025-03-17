@@ -26,11 +26,11 @@ class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
     """
     def __init__(self, vehicle: ElectricVehicle | None = None, origin: Optional[Charging] = None) -> None:
         if origin is not None:
-            super().__init__(origin=origin)
-            self.settings: Charging.Settings = SkodaCharging.Settings(origin=origin.settings)
+            super().__init__(vehicle=vehicle, origin=origin)
+            self.settings: Charging.Settings = SkodaCharging.Settings(parent=self, origin=origin.settings)
         else:
             super().__init__(vehicle=vehicle)
-            self.settings: Charging.Settings = SkodaCharging.Settings(origin=self.settings)
+            self.settings: Charging.Settings = SkodaCharging.Settings(parent=self, origin=self.settings)
         self.errors: Dict[str, Error] = {}
         self.is_in_saved_location: BooleanAttribute = BooleanAttribute("is_in_saved_location", parent=self, tags={'connector_custom'})
 
@@ -40,7 +40,7 @@ class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
         """
         def __init__(self, parent: Optional[GenericObject] = None, origin: Optional[Charging.Settings] = None) -> None:
             if origin is not None:
-                super().__init__(origin=origin)
+                super().__init__(parent=parent, origin=origin)
             else:
                 super().__init__(parent=parent)
             self.preferred_charge_mode: EnumAttribute = EnumAttribute("preferred_charge_mode", parent=self, tags={'connector_custom'})

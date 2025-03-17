@@ -23,7 +23,8 @@ from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
-from carconnectivity.attributes import GenericAttribute, BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute
+from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute, \
+    CurrentAttribute
 from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
@@ -509,12 +510,22 @@ class Connector(BaseConnector):
             if 'settings' in data and data['settings'] is not None:
                 if 'targetStateOfChargeInPercent' in data['settings'] and data['settings']['targetStateOfChargeInPercent'] is not None \
                         and vehicle.charging is not None and vehicle.charging.settings is not None:
+                    vehicle.charging.settings.target_level.minimum = 50.0
+                    vehicle.charging.settings.target_level.maximum = 100.0
+                    vehicle.charging.settings.target_level.precision = 10.0
+                    vehicle.charging.settings.target_level._add_on_set_hook(self.__on_charging_target_level_change)  # pylint: disable=protected-access
+                    vehicle.charging.settings.target_level._is_changeable = True  # pylint: disable=protected-access
                     # pylint: disable-next=protected-access
                     vehicle.charging.settings.target_level._set_value(value=data['settings']['targetStateOfChargeInPercent'], measured=captured_at)
                 else:
                     vehicle.charging.settings.target_level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                 if 'maxChargeCurrentAc' in data['settings'] and data['settings']['maxChargeCurrentAc'] is not None \
                         and vehicle.charging is not None and vehicle.charging.settings is not None:
+                    vehicle.charging.settings.maximum_current.minimum = 6.0
+                    vehicle.charging.settings.maximum_current.maximum = 11.0
+                    vehicle.charging.settings.maximum_current.precision = 1.0
+                    vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_maximum_current_change)  # pylint: disable=protected-access
+                    vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
                     if data['settings']['maxChargeCurrentAc'] == 'MAXIMUM':
                         vehicle.charging.settings.maximum_current._set_value(value=11, measured=captured_at)  # pylint: disable=protected-access
                     elif data['settings']['maxChargeCurrentAc'] == 'REDUCED':
@@ -525,6 +536,8 @@ class Connector(BaseConnector):
                 else:
                     vehicle.charging.settings.maximum_current._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                 if 'autoUnlockPlugWhenCharged' in data['settings'] and data['settings']['autoUnlockPlugWhenCharged'] is not None:
+                    vehicle.charging.settings.auto_unlock._add_on_set_hook(self.__on_charging_auto_unlock_change)  # pylint: disable=protected-access
+                    vehicle.charging.settings.auto_unlock._is_changeable = True  # pylint: disable=protected-access
                     if data['settings']['autoUnlockPlugWhenCharged'] in ['ON', 'PERMANENT']:
                         vehicle.charging.settings.auto_unlock._set_value(True, measured=captured_at)  # pylint: disable=protected-access
                     elif data['settings']['autoUnlockPlugWhenCharged'] == 'OFF':
@@ -1234,7 +1247,7 @@ class Connector(BaseConnector):
                     car_type = GenericVehicle.Type(range_data['carType'])
                     if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, SkodaElectricVehicle):
                         LOG.debug('Promoting %s to SkodaElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                        vehicle = SkodaElectricVehicle(origin=vehicle)
+                        vehicle = SkodaElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                         self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                     elif car_type in [GenericVehicle.Type.FUEL,
                                       GenericVehicle.Type.GASOLINE,
@@ -1244,11 +1257,11 @@ class Connector(BaseConnector):
                                       GenericVehicle.Type.LPG] \
                             and not isinstance(vehicle, SkodaCombustionVehicle):
                         LOG.debug('Promoting %s to SkodaCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
-                        vehicle = SkodaCombustionVehicle(origin=vehicle)
+                        vehicle = SkodaCombustionVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                         self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                     elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, SkodaHybridVehicle):
                         LOG.debug('Promoting %s to SkodaHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                        vehicle = SkodaHybridVehicle(origin=vehicle)
+                        vehicle = SkodaHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                         self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                 except ValueError:
                     LOG_API.warning('Unknown car type %s', range_data['carType'])
@@ -1888,6 +1901,123 @@ class Connector(BaseConnector):
         except requests.exceptions.RetryError as retry_error:
             raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments
+
+    def __on_charging_target_level_change(self, level_attribute: LevelAttribute, target_level: float) -> float:
+        """
+        Callback for the charging target level change.
+
+        Args:
+            level_attribute (LevelAttribute): The level attribute that changed.
+            target_level (float): The new target level.
+        """
+        if level_attribute.parent is None or level_attribute.parent.parent is None \
+                or level_attribute.parent.parent.parent is None or not isinstance(level_attribute.parent.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        vehicle: SkodaVehicle = level_attribute.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        precision: float = level_attribute.precision if level_attribute.precision is not None else 10.0
+        target_level = round(target_level / precision) * precision
+        setting_dict = {}
+        setting_dict['targetSOCInPercent'] = target_level
+
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/set-charge-limit'
+        try:
+            settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
+            if settings_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not set target level (%s)', settings_response.status_code)
+                raise SetterError(f'Could not set value ({settings_response.status_code})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise SetterError(f'Connection error: {connection_error}.'
+                              ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise SetterError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise SetterError(f'Retrying failed: {retry_error}') from retry_error
+        return target_level
+
+    def __on_charging_maximum_current_change(self, current_attribute: CurrentAttribute, maximum_current: float) -> float:
+        """
+        Callback for the charging target level change.
+
+        Args:
+            current_attribute (CurrentAttribute): The current attribute that changed.
+            maximum_current (float): The new maximum current.
+        """
+        if current_attribute.parent is None or current_attribute.parent.parent is None \
+                or current_attribute.parent.parent.parent is None or not isinstance(current_attribute.parent.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        vehicle: SkodaVehicle = current_attribute.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        setting_dict = {}
+        precision: float = current_attribute.precision if current_attribute.precision is not None else 1.0
+        maximum_current = round(maximum_current / precision) * precision
+        if maximum_current < 11:
+            setting_dict['chargingCurrent'] = "REDUCED"
+            maximum_current = 6.0
+        else:
+            setting_dict['chargingCurrent'] = "MAXIMUM"
+            maximum_current = 11.0
+
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/set-charging-current'
+        try:
+            settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
+            if settings_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not set target charging current (%s)', settings_response.status_code)
+                raise SetterError(f'Could not set value ({settings_response.status_code})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise SetterError(f'Connection error: {connection_error}.'
+                              ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise SetterError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise SetterError(f'Retrying failed: {retry_error}') from retry_error
+        return maximum_current
+
+    def __on_charging_auto_unlock_change(self, boolean_attribute: BooleanAttribute, auto_unlock: bool) -> bool:
+        """
+        Callback for the charging target level change.
+
+        Args:
+            boolean_attribute (BooleanAttribute): The boolean attribute that changed.
+            auto_unlock (float): The new auto_unlock setting.
+        """
+        if boolean_attribute.parent is None or boolean_attribute.parent.parent is None \
+                or boolean_attribute.parent.parent.parent is None or not isinstance(boolean_attribute.parent.parent.parent, SkodaVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        vehicle: SkodaVehicle = boolean_attribute.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        setting_dict = {}
+        if auto_unlock:
+            setting_dict['autoUnlockPlug'] = "PERMANENT"
+        else:
+            setting_dict['autoUnlockPlug'] = "OFF"
+
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/charging/{vin}/set-auto-unlock-plug'
+        try:
+            settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
+            if settings_response.status_code != requests.codes['accepted']:
+                LOG.error('Could not set auto unlock setting (%s)', settings_response.status_code)
+                raise SetterError(f'Could not set value ({settings_response.status_code})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise SetterError(f'Connection error: {connection_error}.'
+                              ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise SetterError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise SetterError(f'Retrying failed: {retry_error}') from retry_error
+        return auto_unlock
 
     def get_name(self) -> str:
         return "Skoda Connector"

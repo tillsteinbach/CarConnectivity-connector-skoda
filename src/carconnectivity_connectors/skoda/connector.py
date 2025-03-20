@@ -386,6 +386,8 @@ class Connector(BaseConnector):
                         vehicle_to_update = self.fetch_air_conditioning(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('VEHICLE_HEALTH_INSPECTION', check_status_ok=True):
                         vehicle_to_update = self.fetch_maintenance(vehicle_to_update)
+                    if vehicle_to_update.capabilities.has_capability('TRIP_STATISTICS', check_status_ok=True):
+                        vehicle_to_update = self.fetch_trips(vehicle_to_update)
                 vehicle_to_update = self.decide_state(vehicle_to_update)
         self.car_connectivity.transaction_end()
 
@@ -1420,6 +1422,16 @@ class Connector(BaseConnector):
                                                                                            'windows',
                                                                                            'lights'})
             log_extra_keys(LOG_API, f'/api/v2/vehicle-status/{vin}', vehicle_status_data, {'overall', 'carCapturedTimestamp'})
+        return vehicle
+
+    def fetch_trips(self, vehicle: SkodaVehicle) -> SkodaVehicle:
+        vin = vehicle.vin.value
+        if vin is None:
+            raise ValueError('vehicle.vin cannot be None')
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/trip-statistics/{vin}'
+        data = self._fetch_data(url, self.session)
+        if data is not None:
+            log_extra_keys(LOG_API, 'fetch_trips overall', data, set())
         return vehicle
 
     def _record_elapsed(self, elapsed: timedelta) -> None:

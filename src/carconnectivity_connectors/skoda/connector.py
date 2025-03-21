@@ -374,8 +374,9 @@ class Connector(BaseConnector):
             vehicle_to_update: Optional[GenericVehicle] = garage.get_vehicle(vin)
             if vehicle_to_update is not None and isinstance(vehicle_to_update, SkodaVehicle) and vehicle_to_update.is_managed_by_connector(self):
                 vehicle_to_update = self.fetch_vehicle_status(vehicle_to_update)
-                vehicle_to_update = self.fetch_driving_range(vehicle_to_update)
                 if vehicle_to_update.capabilities is not None and vehicle_to_update.capabilities.enabled:
+                    if vehicle_to_update.capabilities.has_capability('MEASUREMENTS', check_status_ok=True):
+                        vehicle_to_update = self.fetch_driving_range(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('READINESS', check_status_ok=True):
                         vehicle_to_update = self.fetch_connection_status(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('PARKING_POSITION', check_status_ok=True):

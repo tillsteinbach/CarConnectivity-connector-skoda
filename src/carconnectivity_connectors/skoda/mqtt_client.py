@@ -480,7 +480,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     old_charging_state: Optional[Charging.ChargingState] = charging_state
                                     if 'mode' in data['data'] and data['data']['mode'] is not None \
                                             and vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
-                                        if data['data']['mode'] in SkodaCharging.SkodaChargeMode:
+                                        if data['data']['mode'] in [item.value for item in SkodaCharging.SkodaChargeMode]:
                                             skoda_charging_mode = SkodaCharging.SkodaChargeMode(data['data']['mode'])
                                         else:
                                             LOG_API.info('Unkown charging mode %s not in %s', data['data']['mode'], str(SkodaCharging.SkodaChargeMode))

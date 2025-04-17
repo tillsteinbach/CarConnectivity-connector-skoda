@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.7] - 2025-04-17
+### Fixed
+- Bug in mode attribute that caused the connector to crash
+
+### Changed
+- Updated dependencies
+- stripping of leading and trailing spaces in commands
+
+### Added
+- Precision for all attributes is now used when displaying values
+
 ## [0.6] - 2025-04-02
 ### Fixed
 - Only fetch range when measurement capability is available (fix for older cars)
@@ -51,7 +62,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.6...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.7...HEAD
+[0.7]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.7
 [0.6]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.6
 [0.5]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.5
 [0.4.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.4.1

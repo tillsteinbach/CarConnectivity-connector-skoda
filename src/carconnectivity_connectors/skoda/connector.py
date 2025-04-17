@@ -404,13 +404,16 @@ class Connector(BaseConnector):
             SkodaVehicle: The Skoda vehicle object with the updated state.
         """
         if vehicle is not None:
-            if vehicle.in_motion is not None and vehicle.in_motion.enabled and vehicle.in_motion.value:
+            if vehicle.connection_state is not None and vehicle.connection_state.enabled \
+                    and vehicle.connection_state.value == GenericVehicle.ConnectionState.OFFLINE:
+                vehicle.state._set_value(GenericVehicle.State.OFFLINE)
+            elif vehicle.in_motion is not None and vehicle.in_motion.enabled and vehicle.in_motion.value:
                 vehicle.state._set_value(GenericVehicle.State.IGNITION_ON)  # pylint: disable=protected-access
             elif vehicle.position is not None and vehicle.position.enabled and vehicle.position.position_type is not None \
                     and vehicle.position.position_type.enabled and vehicle.position.position_type.value == Position.PositionType.PARKING:
                 vehicle.state._set_value(GenericVehicle.State.PARKED)  # pylint: disable=protected-access
             else:
-                vehicle.state._set_value(None)  # pylint: disable=protected-access
+                vehicle.state._set_value(GenericVehicle.State.UNKNOWN)  # pylint: disable=protected-access
         return vehicle
 
     def fetch_charging(self, vehicle: SkodaElectricVehicle, no_cache: bool = False) -> SkodaElectricVehicle:

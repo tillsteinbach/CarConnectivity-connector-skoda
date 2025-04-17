@@ -505,6 +505,7 @@ class Connector(BaseConnector):
                                     and data['status']['battery']['stateOfChargeInPercent'] is not None:
                                 # pylint: disable-next=protected-access
                                 drive.level._set_value(value=data['status']['battery']['stateOfChargeInPercent'], measured=captured_at)
+                                drive.level.precision = 1
                             log_extra_keys(LOG_API, 'status', data['status']['battery'],  {'remainingCruisingRangeInMeters',
                                                                                            'stateOfChargeInPercent'})
                             break
@@ -706,7 +707,9 @@ class Connector(BaseConnector):
                             else:
                                 longitude = None
                             vehicle.position.latitude._set_value(latitude)  # pylint: disable=protected-access
+                            vehicle.position.latitude.precision = 0.000001
                             vehicle.position.longitude._set_value(longitude)  # pylint: disable=protected-access
+                            vehicle.position.longitude.precision = 0.000001
                             vehicle.position.position_type._set_value(Position.PositionType.PARKING)  # pylint: disable=protected-access
                         else:
                             vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
@@ -759,6 +762,7 @@ class Connector(BaseConnector):
                 raise APIError('Could not fetch maintenance, capturedAt missing')
             if 'mileageInKm' in data and data['mileageInKm'] is not None:
                 vehicle.odometer._set_value(value=data['mileageInKm'], measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+                vehicle.odometer.precision = 1
             else:
                 vehicle.odometer._set_value(None)  # pylint: disable=protected-access
             if 'inspectionDueInDays' in data and data['inspectionDueInDays'] is not None:
@@ -1277,6 +1281,7 @@ class Connector(BaseConnector):
             if 'totalRangeInKm' in range_data and range_data['totalRangeInKm'] is not None:
                 # pylint: disable-next=protected-access
                 vehicle.drives.total_range._set_value(value=range_data['totalRangeInKm'], measured=captured_at, unit=Length.KM)
+                vehicle.drives.total_range.precision = 1
             else:
                 vehicle.drives.total_range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
 
@@ -1309,15 +1314,18 @@ class Connector(BaseConnector):
                             and range_data[f'{drive_id}EngineRange']['currentSoCInPercent'] is not None:
                         # pylint: disable-next=protected-access
                         drive.level._set_value(value=range_data[f'{drive_id}EngineRange']['currentSoCInPercent'], measured=captured_at)
+                        drive.level.precision = 1
                     elif 'currentFuelLevelInPercent' in range_data[f'{drive_id}EngineRange'] \
                             and range_data[f'{drive_id}EngineRange']['currentFuelLevelInPercent'] is not None:
                         # pylint: disable-next=protected-access
                         drive.level._set_value(value=range_data[f'{drive_id}EngineRange']['currentFuelLevelInPercent'], measured=captured_at)
+                        drive.level.precision = 1
                     else:
                         drive.level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                     if 'remainingRangeInKm' in range_data[f'{drive_id}EngineRange'] and range_data[f'{drive_id}EngineRange']['remainingRangeInKm'] is not None:
                         # pylint: disable-next=protected-access
                         drive.range._set_value(value=range_data[f'{drive_id}EngineRange']['remainingRangeInKm'], measured=captured_at, unit=Length.KM)
+                        drive.range.precision = 1
                     else:
                         drive.range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
 

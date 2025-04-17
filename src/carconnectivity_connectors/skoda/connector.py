@@ -501,6 +501,7 @@ class Connector(BaseConnector):
                                 cruising_range_in_km: float = data['status']['battery']['remainingCruisingRangeInMeters'] / 1000
                                 # pylint: disable-next=protected-access
                                 drive.range._set_value(value=cruising_range_in_km, measured=captured_at, unit=Length.KM)
+                                drive.range.precision = 1
                             if 'stateOfChargeInPercent' in data['status']['battery'] \
                                     and data['status']['battery']['stateOfChargeInPercent'] is not None:
                                 # pylint: disable-next=protected-access

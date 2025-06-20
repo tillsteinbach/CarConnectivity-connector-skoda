@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.7.3] - 2025-06-20
+### Fixed
+- Fixes bug that registers hooks several times, causing multiple calls to the servers
+
+### Changed
+- Updated dependencies
+
 ## [0.7.2] - 2025-04-19
 ### Fixed
 - Fix for problems introduced with PyJWT
@@ -70,7 +77,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.7.2...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.7.3
 [0.7.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.7.2
 [0.7.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.7.1
 [0.7]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.7

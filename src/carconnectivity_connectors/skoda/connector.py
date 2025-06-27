@@ -22,7 +22,7 @@ from carconnectivity.units import Length, Speed, Power, Temperature
 from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
-from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
+from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive, DieselDrive
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute, \
     CurrentAttribute
 from carconnectivity.charging import Charging
@@ -1301,10 +1301,11 @@ class Connector(BaseConnector):
                     else:
                         if engine_type == GenericDrive.Type.ELECTRIC:
                             drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives)
+                        elif engine_type == GenericDrive.Type.DIESEL:
+                            drive = DieselDrive(drive_id=drive_id, drives=vehicle.drives)
                         elif engine_type in [GenericDrive.Type.FUEL,
                                              GenericDrive.Type.GASOLINE,
                                              GenericDrive.Type.PETROL,
-                                             GenericDrive.Type.DIESEL,
                                              GenericDrive.Type.CNG,
                                              GenericDrive.Type.LPG]:
                             drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives)
@@ -1335,9 +1336,22 @@ class Connector(BaseConnector):
                                                                                                              'currentSoCInPercent',
                                                                                                              'currentFuelLevelInPercent',
                                                                                                              'remainingRangeInKm'})
+            if 'adBlueRange' in range_data and range_data['adBlueRange'] is not None:
+                # pylint: disable-next=protected-access
+                for drive in vehicle.drives.drives.values():
+                    if isinstance(drive, DieselDrive):
+                        # pylint: disable-next=protected-access
+                        drive.adblue_range._set_value(value=range_data['adBlueRange'], measured=captured_at, unit=Length.KM)
+                        drive.adblue_range.precision = 1
+            else:
+                for drive in vehicle.drives.drives.values():
+                    if isinstance(drive, DieselDrive):
+                        # pylint: disable-next=protected-access
+                        drive.adblue_range._set_value(value=None, measured=captured_at, unit=Length.KM)
             log_extra_keys(LOG_API, '/api/v2/vehicle-status/{vin}/driving-range', range_data, {'carCapturedTimestamp',
                                                                                                'carType',
                                                                                                'totalRangeInKm',
+                                                                                               'adBlueRange',
                                                                                                'primaryEngineRange',
                                                                                                'secondaryEngineRange'})
         return vehicle

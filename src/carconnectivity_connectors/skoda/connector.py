@@ -407,7 +407,7 @@ class Connector(BaseConnector):
         if vehicle is not None:
             if vehicle.connection_state is not None and vehicle.connection_state.enabled \
                     and vehicle.connection_state.value == GenericVehicle.ConnectionState.OFFLINE:
-                vehicle.state._set_value(GenericVehicle.State.OFFLINE)
+                vehicle.state._set_value(GenericVehicle.State.OFFLINE)  # pylint: disable=protected-access
             elif vehicle.in_motion is not None and vehicle.in_motion.enabled and vehicle.in_motion.value:
                 vehicle.state._set_value(GenericVehicle.State.IGNITION_ON)  # pylint: disable=protected-access
             elif vehicle.position is not None and vehicle.position.enabled and vehicle.position.position_type is not None \

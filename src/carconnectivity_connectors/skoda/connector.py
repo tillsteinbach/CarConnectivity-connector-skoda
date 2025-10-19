@@ -387,7 +387,8 @@ class Connector(BaseConnector):
                         vehicle_to_update = self.fetch_position(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('CHARGING', check_status_ok=True) and isinstance(vehicle_to_update, SkodaElectricVehicle):
                         vehicle_to_update = self.fetch_charging(vehicle_to_update)
-                    if vehicle_to_update.capabilities.has_capability('AIR_CONDITIONING', check_status_ok=True):
+                    if vehicle_to_update.capabilities.has_capability('AIR_CONDITIONING', check_status_ok=True) or \
+                        vehicle_to_update.capabilities.has_capability('ACTIVE_VENTILATION', check_status_ok=True):
                         vehicle_to_update = self.fetch_air_conditioning(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('VEHICLE_HEALTH_INSPECTION', check_status_ok=True):
                         vehicle_to_update = self.fetch_maintenance(vehicle_to_update)
@@ -787,10 +788,10 @@ class Connector(BaseConnector):
         Fetches the air conditioning data for a given Skoda vehicle and updates the vehicle object with the retrieved data.
 
         Args:
-            vehicle (SkodaVehicle): The vehicle object for which to fetch air conditioning data.
+            vehicle (SkodaVehicle): The vehicle object for which to fetch air conditioning/ventilation data.
 
         Returns:
-            SkodaVehicle: The updated vehicle object with the fetched air conditioning data.
+            SkodaVehicle: The updated vehicle object with the fetched air conditioning/ventilation data.
 
         Raises:
             APIError: If the VIN is missing or if the carCapturedTimestamp is missing in the response data.
@@ -804,8 +805,17 @@ class Connector(BaseConnector):
         vin = vehicle.vin.value
         if vin is None:
             raise APIError('VIN is missing')
+        
+        # Log which capability triggered the air conditioning fetch
+        active_capabilities = []
+        for cap in ['AIR_CONDITIONING', 'ACTIVE_VENTILATION']:  # Only check same capabilities as line 390
+            if hasattr(vehicle, 'capabilities') and vehicle.capabilities and vehicle.capabilities.has_capability(cap):
+                active_capabilities.append(cap)
+        if active_capabilities:
+            LOG.debug("Fetching air conditioning data for %s triggered by capabilities: %s", vin, ', '.join(active_capabilities))
+            
         if vehicle.position is None:
-            raise ValueError('Vehicle has no charging object')
+            raise ValueError("Vehicle has no climatization object")
         url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}'
         data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
         if data is not None:

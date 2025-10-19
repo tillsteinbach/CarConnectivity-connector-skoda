@@ -390,6 +390,9 @@ class Connector(BaseConnector):
                     if vehicle_to_update.capabilities.has_capability('AIR_CONDITIONING', check_status_ok=True) or \
                         vehicle_to_update.capabilities.has_capability('ACTIVE_VENTILATION', check_status_ok=True):
                         vehicle_to_update = self.fetch_air_conditioning(vehicle_to_update)
+                    # Check for auxiliary heating - using same capability as air conditioning since they are related
+                    if vehicle_to_update.capabilities.has_capability('ACTIVE_VENTILATION', check_status_ok=True):
+                        vehicle_to_update = self.fetch_auxiliary_heating(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('VEHICLE_HEALTH_INSPECTION', check_status_ok=True):
                         vehicle_to_update = self.fetch_maintenance(vehicle_to_update)
                 vehicle_to_update = self.decide_state(vehicle_to_update)
@@ -1089,7 +1092,7 @@ class Connector(BaseConnector):
                 
                 # First, clear any existing timer attributes to avoid conflicts
                 for attr_name in list(dir(vehicle.climatization)):
-                    if attr_name.startswith('timer_'):
+                    if attr_name.startswith('timer_') or attr_name.startswith('active_ventilation_timer_'):
                         try:
                             delattr(vehicle.climatization, attr_name)
                         except AttributeError:
@@ -1099,7 +1102,7 @@ class Connector(BaseConnector):
                 for timer in data['timers']:
                     if 'id' in timer:
                         timer_id = timer['id']
-                        timer_attr_name = f'timer_{timer_id}'
+                        timer_attr_name = f'active_ventilation_timer_{timer_id}'
                         
                         # Create a new GenericObject for each timer
                         from carconnectivity.objects import GenericObject
@@ -1126,6 +1129,117 @@ class Connector(BaseConnector):
                                                              'chargerLockState', 'airConditioningAtUnlock', 'steeringWheelPosition',
                                                              'windowHeatingEnabled', 'seatHeatingActivated', 'windowHeatingState', 'errors',
                                                              'runningRequests', 'timers'})
+        return vehicle
+
+    def fetch_auxiliary_heating(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
+        """
+        Fetches the auxiliary heating data for a given Skoda vehicle and updates the vehicle object with the retrieved data.
+
+        Args:
+            vehicle (SkodaVehicle): The vehicle object for which to fetch auxiliary heating data.
+            no_cache (bool, optional): Whether to bypass cache. Defaults to False.
+
+        Returns:
+            SkodaVehicle: The updated vehicle object with the fetched auxiliary heating data.
+
+        Raises:
+            APIError: If the VIN is missing or if the carCapturedTimestamp is missing in the response data.
+            ValueError: If the vehicle has no climatization object.
+
+        Notes:
+            - The method fetches data from the Skoda auxiliary heating API using the vehicle's VIN.
+            - It updates the vehicle's auxiliary heating state, duration, and timers.
+            - Logs additional keys found in the response data for debugging purposes.
+            - If auxiliary heating is not available (403 error), this is handled gracefully.
+        """
+        vin = vehicle.vin.value
+        if vin is None:
+            raise APIError('VIN is missing')
+        
+        LOG.debug("Fetching auxiliary heating data for %s", vin)
+            
+        if vehicle.climatization is None:
+            raise ValueError("Vehicle has no climatization object")
+        
+        url = f'https://mysmob.api.connect.skoda-auto.cz/api/v2/air-conditioning/{vin}/auxiliary-heating'
+        try:
+            data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)
+        except Exception as e:
+            # Auxiliary heating may not be available for all vehicles or accounts
+            # Handle this gracefully and log for debugging
+            if "403" in str(e) or "Forbidden" in str(e):
+                LOG.debug("Auxiliary heating not available for %s (403 Forbidden) - this may be normal for this vehicle", vin)
+                return vehicle
+            else:
+                # Re-raise other errors
+                raise e
+        
+        if data is not None:
+            if 'carCapturedTimestamp' in data and data['carCapturedTimestamp'] is not None:
+                captured_at: datetime = robust_time_parse(data['carCapturedTimestamp'])
+            else:
+                raise APIError('Could not fetch auxiliary heating, carCapturedTimestamp missing')
+            
+            # Add auxiliary heating state attribute to climatization if not already present
+            if not hasattr(vehicle.climatization, 'auxiliary_heating_state'):
+                from carconnectivity.objects import GenericObject
+                from carconnectivity.attributes import StringAttribute
+                
+                aux_heating_obj = GenericObject(object_id='auxiliary_heating_state', parent=vehicle.climatization)
+                aux_heating_obj.state = StringAttribute(name='state', parent=aux_heating_obj, value='UNKNOWN', tags=['auxiliary_heating'])
+                aux_heating_obj.duration_seconds = StringAttribute(name='duration_seconds', parent=aux_heating_obj, value='0', tags=['auxiliary_heating'])
+                setattr(vehicle.climatization, 'auxiliary_heating_state', aux_heating_obj)
+            
+            # Update auxiliary heating state
+            if 'state' in data and data['state'] is not None:
+                vehicle.climatization.auxiliary_heating_state.state._set_value(value=str(data['state']), measured=captured_at)  # pylint: disable=protected-access
+            else:
+                vehicle.climatization.auxiliary_heating_state.state._set_value(value='UNKNOWN', measured=captured_at)  # pylint: disable=protected-access
+                
+            # Update duration in seconds
+            if 'durationInSeconds' in data and data['durationInSeconds'] is not None:
+                vehicle.climatization.auxiliary_heating_state.duration_seconds._set_value(value=str(data['durationInSeconds']), measured=captured_at)  # pylint: disable=protected-access
+            else:
+                vehicle.climatization.auxiliary_heating_state.duration_seconds._set_value(value='0', measured=captured_at)  # pylint: disable=protected-access
+            
+            # Handle auxiliary heating timers similar to air conditioning timers
+            if 'timers' in data and isinstance(data['timers'], list):
+                from carconnectivity.objects import GenericObject
+                from carconnectivity.attributes import BooleanAttribute, StringAttribute
+                
+                # Create timer objects for auxiliary heating
+                for timer in data['timers']:
+                    if 'id' in timer:
+                        timer_id = timer['id']
+                        timer_attr_name = f'auxiliary_heating_timer_{timer_id}'
+                        
+                        # Only create if not already present
+                        if not hasattr(vehicle.climatization, timer_attr_name):
+                            timer_obj = GenericObject(object_id=timer_attr_name, parent=vehicle.climatization)
+                            timer_obj.timer_enabled = BooleanAttribute(name='timer_enabled', parent=timer_obj, value=False, tags=['auxiliary_heating'])
+                            timer_obj.time = StringAttribute(name='time', parent=timer_obj, value='00:00', tags=['auxiliary_heating'])
+                            timer_obj.type = StringAttribute(name='type', parent=timer_obj, value='ONE_OFF', tags=['auxiliary_heating'])
+                            timer_obj.selected_days = StringAttribute(name='selected_days', parent=timer_obj, value='', tags=['auxiliary_heating'])
+                            setattr(vehicle.climatization, timer_attr_name, timer_obj)
+                        
+                        # Update timer object
+                        timer_obj = getattr(vehicle.climatization, timer_attr_name)
+                        if 'enabled' in timer:
+                            timer_obj.timer_enabled._set_value(value=bool(timer['enabled']), measured=captured_at)  # pylint: disable=protected-access
+                        if 'time' in timer:
+                            timer_obj.time._set_value(value=str(timer['time']), measured=captured_at)  # pylint: disable=protected-access
+                        if 'type' in timer:
+                            timer_obj.type._set_value(value=str(timer['type']), measured=captured_at)  # pylint: disable=protected-access
+                        if 'selectedDays' in timer:
+                            timer_obj.selected_days._set_value(value=str(timer.get('selectedDays', '')), measured=captured_at)  # pylint: disable=protected-access
+                
+                LOG_API.debug('Found %d auxiliary heating timers', len(data['timers']))
+                for i, timer in enumerate(data['timers']):
+                    LOG_API.debug('Auxiliary Heating Timer %d: id=%s, enabled=%s, time=%s, type=%s', 
+                            i, timer.get('id'), timer.get('enabled'), timer.get('time'), timer.get('type'))
+            
+            log_extra_keys(LOG_API, 'auxiliary-heating', data,  {'carCapturedTimestamp', 'state', 'durationInSeconds',
+                                                                 'timers', 'outsideTemperature', 'errors'})
         return vehicle
 
     def fetch_vehicle_details(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

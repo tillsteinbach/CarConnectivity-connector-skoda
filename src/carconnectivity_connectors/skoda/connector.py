@@ -1074,10 +1074,58 @@ class Connector(BaseConnector):
             else:
                 if isinstance(vehicle.climatization, SkodaClimatization):
                     vehicle.climatization.errors.clear()
+            
+            # Handle runningRequests
+            if 'runningRequests' in data and data['runningRequests'] is not None:
+                if not isinstance(vehicle.climatization, SkodaClimatization):
+                    vehicle.climatization = SkodaClimatization(origin=vehicle.climatization)
+                vehicle.climatization.running_requests._set_value(data['runningRequests'], measured=captured_at)  # pylint: disable=protected-access
+                LOG_API.debug('Found %d running requests in air-conditioning data', len(data['runningRequests']))
+            
+            # Handle timers - create individual timer objects for clean structure
+            if 'timers' in data and data['timers'] is not None:
+                if not isinstance(vehicle.climatization, SkodaClimatization):
+                    vehicle.climatization = SkodaClimatization(origin=vehicle.climatization)
+                
+                # First, clear any existing timer attributes to avoid conflicts
+                for attr_name in list(dir(vehicle.climatization)):
+                    if attr_name.startswith('timer_'):
+                        try:
+                            delattr(vehicle.climatization, attr_name)
+                        except AttributeError:
+                            pass
+                
+                # Create individual timer objects as attributes for clean hierarchical display
+                for timer in data['timers']:
+                    if 'id' in timer:
+                        timer_id = timer['id']
+                        timer_attr_name = f'timer_{timer_id}'
+                        
+                        # Create a new GenericObject for each timer
+                        from carconnectivity.objects import GenericObject
+                        from carconnectivity.attributes import BooleanAttribute, StringAttribute, GenericAttribute
+                        
+                        timer_obj = GenericObject(object_id=timer_attr_name, parent=vehicle.climatization)
+                        
+                        # Use timer_enabled instead of enabled to avoid conflict with GenericObject.enabled
+                        timer_obj.timer_enabled = BooleanAttribute(name='timer_enabled', parent=timer_obj, value=timer.get('enabled', False), tags={"connector_custom"})
+                        timer_obj.time = StringAttribute(name='time', parent=timer_obj, value=timer.get('time', '00:00'), tags={"connector_custom"})
+                        timer_obj.type = StringAttribute(name='type', parent=timer_obj, value=timer.get('type', 'ONE_OFF'), tags={"connector_custom"})
+                        timer_obj.selected_days = GenericAttribute(name='selected_days', parent=timer_obj, value=timer.get('selectedDays', []), tags={"connector_custom"})
+                        
+                        # Add the timer object as an attribute to climatization
+                        setattr(vehicle.climatization, timer_attr_name, timer_obj)
+                
+                LOG_API.debug('Found %d timers in air-conditioning data', len(data['timers']))
+                for i, timer in enumerate(data['timers']):
+                    LOG_API.debug('Timer %d: id=%s, enabled=%s, time=%s, type=%s', 
+                            i, timer.get('id'), timer.get('enabled'), timer.get('time'), timer.get('type'))
+                
             log_extra_keys(LOG_API, 'air-condition', data,  {'carCapturedTimestamp', 'state', 'estimatedDateTimeToReachTargetTemperature',
                                                              'targetTemperature', 'outsideTemperature', 'chargerConnectionState',
                                                              'chargerLockState', 'airConditioningAtUnlock', 'steeringWheelPosition',
-                                                             'windowHeatingEnabled', 'seatHeatingActivated', 'windowHeatingState', 'errors'})
+                                                             'windowHeatingEnabled', 'seatHeatingActivated', 'windowHeatingState', 'errors',
+                                                             'runningRequests', 'timers'})
         return vehicle
 
     def fetch_vehicle_details(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

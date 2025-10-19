@@ -31,6 +31,13 @@ class SkodaClimatization(Climatization):  # pylint: disable=too-many-instance-at
             super().__init__(vehicle=vehicle)
             self.settings: Climatization.Settings = SkodaClimatization.Settings(parent=self)
         self.errors: Dict[str, Error] = {}
+        # Add custom Skoda-specific attributes
+        from carconnectivity.attributes import GenericAttribute
+        from carconnectivity.objects import GenericObject
+        self.running_requests: GenericAttribute = GenericAttribute(name='running_requests', parent=self)
+        # Individual timer objects will be added dynamically as timer_1, timer_2, timer_3
+
+
 
     class Settings(Climatization.Settings):
         """

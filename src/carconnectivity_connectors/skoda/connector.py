@@ -766,7 +766,8 @@ class Connector(BaseConnector):
                 captured_at: datetime = robust_time_parse(data['capturedAt'])
             else:
                 raise APIError('Could not fetch maintenance, capturedAt missing')
-            if 'mileageInKm' in data and data['mileageInKm'] is not None:
+            if 'mileageInKm' in data and data['mileageInKm'] is not None \
+                    and not vehicle.odometer.enabled and vehicle.odometer.value is None:
                 vehicle.odometer._set_value(value=data['mileageInKm'], measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
                 vehicle.odometer.precision = 1
             else:
@@ -779,7 +780,38 @@ class Connector(BaseConnector):
                 vehicle.maintenance.inspection_due_at._set_value(value=inspection_date, measured=captured_at)
             else:
                 vehicle.maintenance.inspection_due_at._set_value(None)  # pylint: disable=protected-access
-            log_extra_keys(LOG_API, 'maintenance', data,  {'capturedAt', 'mileageInKm', 'inspectionDueInDays'})
+            
+            # Add inspection due in kilometers
+            if 'inspectionDueInKm' in data and data['inspectionDueInKm'] is not None:
+                # pylint: disable-next=protected-access
+                vehicle.maintenance.inspection_due_after._set_value(value=data['inspectionDueInKm'], measured=captured_at, unit=Length.KM)
+                vehicle.maintenance.inspection_due_after.precision = 1
+            else:
+                vehicle.maintenance.inspection_due_after._set_value(None)  # pylint: disable=protected-access
+            
+            # Add oil service due in days
+            if 'oilServiceDueInDays' in data and data['oilServiceDueInDays'] is not None:
+                oil_service_due: timedelta = timedelta(days=data['oilServiceDueInDays'])
+                oil_service_date: datetime = captured_at + oil_service_due
+                oil_service_date = oil_service_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                # pylint: disable-next=protected-access
+                vehicle.maintenance.oil_service_due_at._set_value(value=oil_service_date, measured=captured_at)
+            else:
+                vehicle.maintenance.oil_service_due_at._set_value(None)  # pylint: disable=protected-access
+            
+            # Add oil service due in kilometers
+            if 'oilServiceDueInKm' in data and data['oilServiceDueInKm'] is not None:
+                # pylint: disable-next=protected-access
+                vehicle.maintenance.oil_service_due_after._set_value(value=data['oilServiceDueInKm'], measured=captured_at, unit=Length.KM)
+                vehicle.maintenance.oil_service_due_after.precision = 1
+            else:
+                vehicle.maintenance.oil_service_due_after._set_value(None)  # pylint: disable=protected-access
+            
+            log_extra_keys(LOG_API, 'maintenance', data,  {'capturedAt', 'mileageInKm', 'inspectionDueInDays', 'inspectionDueInKm', 'oilServiceDueInDays', 'oilServiceDueInKm'})
+            try:
+                self._store_extra(vehicle, 'maintenance', data, {'capturedAt', 'mileageInKm', 'inspectionDueInDays', 'inspectionDueInKm', 'oilServiceDueInDays', 'oilServiceDueInKm'})
+            except Exception:
+                pass
 
         #url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-health-report/warning-lights/{vin}'
         #data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)

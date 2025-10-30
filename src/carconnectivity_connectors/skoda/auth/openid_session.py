@@ -1,4 +1,4 @@
- """Implements a session class that handles OpenID authentication."""
+"""Implements a session class that handles OpenID authentication."""
 from __future__ import annotations
 from typing import TYPE_CHECKING
 

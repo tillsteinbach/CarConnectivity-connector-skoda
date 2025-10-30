@@ -70,6 +70,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         self.delayed_access_function_timers: Dict[str, threading.Timer] = {}
 
         self.tls_set(cert_reqs=ssl.CERT_NONE)
+        
+        self._retry_refresh_login_once = True
 
     def connect(self, *args, **kwargs) -> MQTTErrorCode:
         """
@@ -321,6 +323,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             self._skoda_connector.car_connectivity.garage.add_observer(observer=self._on_carconnectivity_vehicle_enabled,
                                                                        flag=observer_flags,
                                                                        priority=Observable.ObserverPriority.USER_MID)
+            self._retry_refresh_login_once = True
             self._subscribe_vehicles()
 
         # Handle different reason codes
@@ -338,6 +341,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             LOG.error('Could not connect (%s): Client identifier not valid', reason_code)
         elif reason_code == 134:
             LOG.error('Could not connect (%s): Bad user name or password', reason_code)
+            if self._retry_refresh_login_once == True:
+                self._retry_refresh_login_once = False
+                LOG.info('trying a relogin once to resolve the error')
+                self._skoda_connector.session.login()
         elif reason_code == 135:
             LOG.error('Could not connect (%s): Not authorized', reason_code)
         elif reason_code == 136:

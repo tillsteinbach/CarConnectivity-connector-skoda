@@ -1,4 +1,4 @@
-"""Implements a session class that handles OpenID authentication."""
+ """Implements a session class that handles OpenID authentication."""
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
@@ -165,6 +165,10 @@ class OpenIDSession(requests.Session):
             # If expires_in is set and expires_at is not set we calculate expires_at from expires_in using the current time
             if 'expires_in' in new_token and 'expires_at' not in new_token:
                 new_token['expires_at'] = time.time() + int(new_token.get('expires_in'))
+        if new_token['expires_in'] > 3600:
+            LOG.warning('unexpected Token expires_in > 3600s (%d)', new_token['expires_in'])
+        if new_token['expires_at'] > (time.time() + 3600):
+            LOG.warning('unexpected Token expires_at after more than 3600s')
         self._token = new_token
 
     @property

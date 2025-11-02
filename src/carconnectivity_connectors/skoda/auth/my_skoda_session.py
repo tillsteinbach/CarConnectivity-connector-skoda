@@ -15,6 +15,7 @@ from urllib.parse import parse_qsl, urlparse
 
 import requests
 from requests.models import CaseInsensitiveDict
+from requests.exceptions import ReadTimeout, ConnectionError
 
 from oauthlib.common import add_params_to_uri, generate_nonce, to_unicode
 from oauthlib.oauth2 import InsecureTransportError
@@ -58,17 +59,22 @@ class MySkodaSession(SkodaWebSession):
     def login(self):
         super(MySkodaSession, self).login()
 
-        verifier = "".join(random.choices(string.ascii_uppercase + string.digits, k=16))
-        verifier_hash = hashlib.sha256(verifier.encode("utf-8")).digest()
-        code_challenge = base64.b64encode(verifier_hash).decode("utf-8").replace("+", "-").replace("/", "_").rstrip("=")
-        # retrieve authorization URL
-        authorization_url = self.authorization_url(url='https://identity.vwgroup.io/oidc/v1/authorize', prompt='login', code_challenge=code_challenge,
-                                                   code_challenge_method='s256')
-        # perform web authentication
-        response = self.do_web_auth(authorization_url)
-        # fetch tokens from web authentication response
-        self.fetch_tokens('https://mysmob.api.connect.skoda-auto.cz/api/v1/authentication/exchange-authorization-code?tokenType=CONNECT',
-                          authorization_response=response, verifier=verifier)
+        try:
+            verifier = "".join(random.choices(string.ascii_uppercase + string.digits, k=16))
+            verifier_hash = hashlib.sha256(verifier.encode("utf-8")).digest()
+            code_challenge = base64.b64encode(verifier_hash).decode("utf-8").replace("+", "-").replace("/", "_").rstrip("=")
+            # retrieve authorization URL
+            authorization_url = self.authorization_url(url='https://identity.vwgroup.io/oidc/v1/authorize', prompt='login', code_challenge=code_challenge,
+                                                       code_challenge_method='s256')
+            # perform web authentication
+            response = self.do_web_auth(authorization_url)
+            # fetch tokens from web authentication response
+            self.fetch_tokens('https://mysmob.api.connect.skoda-auto.cz/api/v1/authentication/exchange-authorization-code?tokenType=CONNECT',
+                              authorization_response=response, verifier=verifier)
+        except ReadTimeout as exc:
+            raise TemporaryAuthenticationError('Login timed out (Read timeout)') from exc
+        except ConnectionError as exc:
+            raise TemporaryAuthenticationError('Login failed due to connection error') from exc
 
     def refresh(self) -> None:
         # refresh tokens from refresh endpoint
@@ -118,7 +124,7 @@ class MySkodaSession(SkodaWebSession):
             token_response = self.post(token_url, headers=request_headers, data=body, allow_redirects=False,
                                             access_type=AccessType.NONE)  # pyright: ignore reportCallIssue
             if token_response.status_code != requests.codes['ok']:
-                raise TemporaryAuthenticationError(f'Token could not be fetched due to temporary WeConnect failure: {token_response.status_code}')
+                raise TemporaryAuthenticationError(f'Token could not be fetched due to temporary MySkoda failure: {token_response.status_code}')
             # parse token from response body
             token = self.parse_from_body(token_response.text)
             return token
@@ -132,7 +138,7 @@ class MySkodaSession(SkodaWebSession):
             # Tokens are in body of response in json format
             token = json.loads(token_response)
         except json.decoder.JSONDecodeError as err:
-            raise TemporaryAuthenticationError('Token could not be refreshed due to temporary WeConnect failure: json could not be decoded') from err
+            raise TemporaryAuthenticationError('Token could not be refreshed due to temporary MySkoda failure: json could not be decoded') from err
         found_tokens: Set[str] = set()
         # Fix token keys, we want access_token instead of accessToken
         if 'accessToken' in token:

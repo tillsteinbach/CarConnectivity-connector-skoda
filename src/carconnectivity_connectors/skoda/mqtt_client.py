@@ -13,7 +13,7 @@ from datetime import timedelta, timezone
 from paho.mqtt.client import Client
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion, MQTTErrorCode
 
-from carconnectivity.errors import CarConnectivityError
+from carconnectivity.errors import CarConnectivityError, TemporaryAuthenticationError
 from carconnectivity.observable import Observable
 from carconnectivity.vehicle import GenericVehicle
 
@@ -100,7 +100,12 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         del userdata
 
         if self._skoda_connector.session.expired or self._skoda_connector.session.access_token is None:
-            self._skoda_connector.session.refresh()
+            try:
+                self._skoda_connector.session.refresh()
+            except ConnectionError as exc:
+                LOG.error('Token refresh failed due to connection error: %s', exc)
+            except TemporaryAuthenticationError as exc:
+                LOG.error('Token refresh failed due to temporary MySkoda error: %s', exc)
         if not self._skoda_connector.session.expired and self._skoda_connector.session.access_token is not None:
             # pylint: disable-next=attribute-defined-outside-init # this is a false positive, password has a setter in super class
             self._password = self._skoda_connector.session.access_token  # This is a bit hacky but if password attribute is used here there is an Exception
@@ -344,7 +349,12 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             if self._retry_refresh_login_once == True:
                 self._retry_refresh_login_once = False
                 LOG.info('trying a relogin once to resolve the error')
-                self._skoda_connector.session.login()
+                try:
+                    self._skoda_connector.session.login()
+                except TemporaryAuthenticationError as exc:
+                    LOG.error('Login failed due to temporary MySkoda error: %s', exc)
+                except ConnectionError as exc:
+                    LOG.error('Login failed due to connection error: %s', exc)
         elif reason_code == 135:
             LOG.error('Could not connect (%s): Not authorized', reason_code)
         elif reason_code == 136:

@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.8.2] - 2025-11-03
+### Fixed
+- Fixes bug that may have persisted wrong expires_in calculation
+
 ## [0.8.1] - 2025-11-02
 ### Fixed
 - Relogin when MQTT client receives a bad username or password error
@@ -91,7 +95,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.8.1...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.8.2
 [0.8.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.8.1
 [0.8]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.8
 [0.7.3]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.7.3

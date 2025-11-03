@@ -12,6 +12,7 @@ import random
 import string
 
 from urllib.parse import parse_qsl, urlparse
+from urllib3.exceptions import NameResolutionError
 
 import requests
 from requests.models import CaseInsensitiveDict
@@ -75,6 +76,8 @@ class MySkodaSession(SkodaWebSession):
             raise TemporaryAuthenticationError('Login timed out (Read timeout)') from exc
         except ConnectionError as exc:
             raise TemporaryAuthenticationError('Login failed due to connection error') from exc
+        except NameResolutionError as exc:
+            raise TemporaryAuthenticationError('Token could not be refreshed due to Name resolution error, probably no internet connection') from exc
 
     def refresh(self) -> None:
         # refresh tokens from refresh endpoint
@@ -228,3 +231,5 @@ class MySkodaSession(SkodaWebSession):
         except ConnectionError:
             self.login()
             return self.token
+        except NameResolutionError as exc:
+            raise TemporaryAuthenticationError('Token could not be refreshed due to Name resolution error, probably no internet connection') from exc

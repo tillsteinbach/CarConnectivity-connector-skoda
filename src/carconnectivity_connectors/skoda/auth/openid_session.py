@@ -160,11 +160,11 @@ class OpenIDSession(requests.Session):
                         new_token['expires_in'] = (expires_at - datetime.now(tz=timezone.utc)).total_seconds()
                         LOG.error('### calculated expires_in: %d', new_token['expires_in'])
                 if 'expires_in' not in new_token and self._token is not None and 'expires_in' in self._token:
-                        new_token['expires_in'] = self._token['expires_in']
-                        LOG.error('### Token missing expires_in, assuming same as before (%d)', new_token['expires_in'])
+                    new_token['expires_in'] = self._token['expires_in']
+                    LOG.error('### Token missing expires_in, assuming same as before (%d)', new_token['expires_in'])
                 else:
-                        new_token['expires_in'] = 3600
-                        LOG.error('### Token missing expires_in, assuming default 3600s')
+                    new_token['expires_in'] = 3600
+                    LOG.error('### Token missing expires_in, assuming default 3600s')
             # If expires_in is set and expires_at is not set we calculate expires_at from expires_in using the current time
             if 'expires_in' in new_token and 'expires_at' not in new_token:
                 new_token['expires_at'] = time.time() + int(new_token.get('expires_in'))

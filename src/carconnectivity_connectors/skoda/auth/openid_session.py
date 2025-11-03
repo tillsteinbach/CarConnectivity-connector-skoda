@@ -151,13 +151,18 @@ class OpenIDSession(requests.Session):
             if 'expires_in' not in new_token:
                 if self._token is not None and 'expires_in' in self._token:
                     new_token['expires_in'] = self._token['expires_in']
+                    LOG.error('### Token missing expires_in, assuming same as before (%d)', new_token['expires_in'])
                 else:
                     if 'id_token' in new_token:
                         meta_data = jwt.decode(new_token['id_token'], options={"verify_signature": False})
                         if 'exp' in meta_data:
                             new_token['expires_at'] = meta_data['exp']
+                            LOG.error('### meta_data[\'exp\'] found, setting expires_at to %d', meta_data['exp'])
                             expires_at = datetime.fromtimestamp(meta_data['exp'], tz=timezone.utc)
+                            LOG.error('### calculated expires_at: %s', expires_at.isoformat())
+                            LOG.error('### current time: %s', datetime.now(tz=timezone.utc).isoformat())
                             new_token['expires_in'] = (expires_at - datetime.now(tz=timezone.utc)).total_seconds()
+                            LOG.error('### calculated expires_in: %d', new_token['expires_in'])
                         else:
                             new_token['expires_in'] = 3600
                     else:
@@ -165,6 +170,8 @@ class OpenIDSession(requests.Session):
             # If expires_in is set and expires_at is not set we calculate expires_at from expires_in using the current time
             if 'expires_in' in new_token and 'expires_at' not in new_token:
                 new_token['expires_at'] = time.time() + int(new_token.get('expires_in'))
+                LOG.error('### current epoch time: %f', time.time())
+                LOG.error('### calculated expires_at: %s', new_token['expires_at'])
         if new_token['expires_in'] > 3600:
             LOG.warning('unexpected Token expires_in > 3600s (%d)', new_token['expires_in'])
         if new_token['expires_at'] > (time.time() + 3600):

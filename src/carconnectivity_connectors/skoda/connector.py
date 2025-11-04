@@ -765,6 +765,8 @@ class Connector(BaseConnector):
             if 'mileageInKm' in data and data['mileageInKm'] is not None:
                 vehicle.odometer._set_value(value=data['mileageInKm'], measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
                 vehicle.odometer.precision = 1
+            else:
+                vehicle.odometer._set_value(None)  # pylint: disable=protected-access
             if 'inspectionDueInDays' in data and data['inspectionDueInDays'] is not None:
                 inspection_due: timedelta = timedelta(days=data['inspectionDueInDays'])
                 inspection_date: datetime = captured_at + inspection_due

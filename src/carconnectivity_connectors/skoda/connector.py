@@ -762,12 +762,9 @@ class Connector(BaseConnector):
                 captured_at: datetime = robust_time_parse(data['capturedAt'])
             else:
                 raise APIError('Could not fetch maintenance, capturedAt missing')
-            if 'mileageInKm' in data and data['mileageInKm'] is not None \
-                    and not vehicle.odometer.enabled and vehicle.odometer.value is None:
+            if 'mileageInKm' in data and data['mileageInKm'] is not None:
                 vehicle.odometer._set_value(value=data['mileageInKm'], measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
                 vehicle.odometer.precision = 1
-            else:
-                vehicle.odometer._set_value(None)  # pylint: disable=protected-access
             if 'inspectionDueInDays' in data and data['inspectionDueInDays'] is not None:
                 inspection_due: timedelta = timedelta(days=data['inspectionDueInDays'])
                 inspection_date: datetime = captured_at + inspection_due
@@ -804,10 +801,6 @@ class Connector(BaseConnector):
                 vehicle.maintenance.oil_service_due_after._set_value(None)  # pylint: disable=protected-access
             
             log_extra_keys(LOG_API, 'maintenance', data,  {'capturedAt', 'mileageInKm', 'inspectionDueInDays', 'inspectionDueInKm', 'oilServiceDueInDays', 'oilServiceDueInKm'})
-            try:
-                self._store_extra(vehicle, 'maintenance', data, {'capturedAt', 'mileageInKm', 'inspectionDueInDays', 'inspectionDueInKm', 'oilServiceDueInDays', 'oilServiceDueInKm'})
-            except Exception:
-                pass
 
         #url = f'https://mysmob.api.connect.skoda-auto.cz/api/v1/vehicle-health-report/warning-lights/{vin}'
         #data: Dict[str, Any] | None = self._fetch_data(url=url, session=self.session, no_cache=no_cache)

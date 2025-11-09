@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 name = "carconnectivity-connector-skoda"
 description = "CarConnectivity connector for Skoda services"
 dynamic = ["version"]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 authors = [
     { name = "Till Steinbach" }
 ]

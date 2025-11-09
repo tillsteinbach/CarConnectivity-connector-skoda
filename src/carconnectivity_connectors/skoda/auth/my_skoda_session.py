@@ -108,9 +108,9 @@ class MySkodaSession(SkodaWebSession):
             TemporaryAuthenticationError: If the token request fails due to a temporary WeConnect failure.
         """
         # take token from authorization response (those are stored in self.token now!)
+        authorization_response = authorization_response.replace(self.redirect_uri + '#', 'https://egal?').replace(self.redirect_uri + '?', 'https://egal?')
         self.parse_from_fragment(authorization_response)
-        
-        if self.token is not None and all(key in self.token for key in ('code', 'id_token')):
+        if self.token is not None and 'code' in self.token:
             # Generate json body for token request
             body: str = json.dumps(
                 {

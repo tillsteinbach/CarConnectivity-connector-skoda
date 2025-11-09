@@ -318,7 +318,7 @@ class OpenIDSession(requests.Session):
         Returns:
             str: The complete authorization URL with the necessary query parameters.
         """
-        auth_url = prepare_grant_uri(uri=url, client_id=self.client_id, redirect_uri=self.redirect_uri, response_type='code id_token', scope=self.scope,
+        auth_url = prepare_grant_uri(uri=url, client_id=self.client_id, redirect_uri=self.redirect_uri, response_type='code', scope=self.scope,
                                      nonce=generate_nonce(), **kwargs)
         return auth_url
 

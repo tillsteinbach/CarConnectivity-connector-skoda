@@ -18,7 +18,7 @@ from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
     TemporaryAuthenticationError, SetterError, CommandError
 from carconnectivity.util import robust_time_parse, log_extra_keys, config_remove_credentials
-from carconnectivity.units import Length, Speed, Power, Temperature
+from carconnectivity.units import Length, Speed, Power, Temperature, Energy
 from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
@@ -1189,10 +1189,23 @@ class Connector(BaseConnector):
                     vehicle.model._set_value(vehicle_data['specification']['model'])  # pylint: disable=protected-access
                 else:
                     vehicle.model._set_value(None)  # pylint: disable=protected-access
-                log_extra_keys(LOG_API, 'specification', vehicle_data['specification'],  {'model'})
+                if 'modelYear' in vehicle_data['specification'] and vehicle_data['specification']['modelYear'] is not None:
+                    vehicle.model_year._set_value(vehicle_data['specification']['modelYear'])  # pylint: disable=protected-access
+                else:
+                    vehicle.model_year._set_value(None)  # pylint: disable=protected-access
+                if 'battery' in vehicle_data['specification'] and vehicle_data['specification']['battery'] is not None:
+                    if 'capacityInKWh' in vehicle_data['specification']['battery'] \
+                            and vehicle_data['specification']['battery']['capacityInKWh'] is not None:
+                        if isinstance(vehicle, SkodaElectricVehicle):
+                            electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
+                            if electric_drive is not None and electric_drive.battery is not None:
+                                # pylint: disable-next=protected-access
+                                electric_drive.battery.available_capacity._set_value(value=vehicle_data['specification']['battery']['capacityInKWh'],
+                                                                                     unit=Energy.KWH)
+                log_extra_keys(LOG_API, 'specification', vehicle_data['specification'],  {'model', 'modelYear', 'battery'})
             else:
                 vehicle.model._set_value(None)  # pylint: disable=protected-access
-            log_extra_keys(LOG_API, 'api/v2/garage/vehicles/VIN', vehicle_data, {'softwareVersion'})
+            log_extra_keys(LOG_API, 'api/v2/garage/vehicles/VIN', vehicle_data, {'softwareVersion', 'specification'})
         return vehicle
 
     def fetch_vehicle_images(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

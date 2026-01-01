@@ -1393,6 +1393,9 @@ class Connector(BaseConnector):
                             drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives)
                         drive.type._set_value(engine_type)  # pylint: disable=protected-access
                         vehicle.drives.add_drive(drive)
+                        if engine_type == GenericDrive.Type.ELECTRIC:
+                            # There may be a battery capacity specification available, better check again:
+                            self.fetch_vehicle_details(vehicle=vehicle)
                     if 'currentSoCInPercent' in range_data[f'{drive_id}EngineRange'] \
                             and range_data[f'{drive_id}EngineRange']['currentSoCInPercent'] is not None:
                         # pylint: disable-next=protected-access

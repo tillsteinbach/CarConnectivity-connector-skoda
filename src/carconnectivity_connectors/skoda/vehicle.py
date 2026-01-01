@@ -2,6 +2,10 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import threading
+
+from datetime import datetime
+
 from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionVehicle, HybridVehicle
 from carconnectivity.charging import Charging
 from carconnectivity.attributes import BooleanAttribute
@@ -35,6 +39,9 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
             self.capabilities.parent = self
             self.in_motion: BooleanAttribute = origin.in_motion
             self.in_motion.parent = self
+            self.last_measurement: Optional[datetime] = origin.last_measurement
+            self.official_connection_state: Optional[GenericVehicle.ConnectionState] = origin.official_connection_state
+            self.online_timeout_timer: Optional[threading.Timer] = origin.online_timeout_timer
             if SUPPORT_IMAGES:
                 self._car_images = origin._car_images
 
@@ -43,9 +50,17 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
             self.climatization = SkodaClimatization(vehicle=self, origin=self.climatization)
             self.capabilities = Capabilities(vehicle=self)
             self.in_motion = BooleanAttribute(name='in_motion', parent=self, tags={'connector_custom'})
+            self.last_measurement = None
+            self.official_connection_state = None
+            self.online_timeout_timer: Optional[threading.Timer] = None
             if SUPPORT_IMAGES:
                 self._car_images: Dict[str, Image.Image] = {}
         self.manufacturer._set_value(value='Škoda')  # pylint: disable=protected-access
+
+    def __del__(self) -> None:
+        if self.online_timeout_timer is not None:
+            self.online_timeout_timer.cancel()
+            self.online_timeout_timer = None
 
 
 class SkodaElectricVehicle(ElectricVehicle, SkodaVehicle):

@@ -70,7 +70,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         self.delayed_access_function_timers: Dict[str, threading.Timer] = {}
 
         self.tls_set(cert_reqs=ssl.CERT_NONE)
-        
+
         self._retry_refresh_login_once = True
 
     def connect(self, *args, **kwargs) -> MQTTErrorCode:
@@ -346,7 +346,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             LOG.error('Could not connect (%s): Client identifier not valid', reason_code)
         elif reason_code == 134:
             LOG.error('Could not connect (%s): Bad user name or password', reason_code)
-            if self._retry_refresh_login_once == True:
+            if self._retry_refresh_login_once is True:
                 self._retry_refresh_login_once = False
                 LOG.info('trying a relogin once to resolve the error')
                 try:
@@ -484,6 +484,9 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             if data is not None:
                 if 'timestamp' in data and data['timestamp'] is not None:
                     measured_at: datetime = robust_time_parse(data['timestamp'])
+                    vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                    if isinstance(vehicle, SkodaVehicle):
+                        self._skoda_connector._update_online_tracking(vehicle=vehicle, last_measurement=measured_at)  # pylint: disable=protected-access
                 else:
                     measured_at: datetime = datetime.now(tz=timezone.utc)
                 if service_event == 'charging':

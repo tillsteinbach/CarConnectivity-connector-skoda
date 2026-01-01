@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.10] - 2026-01-01
+### Added
+- Online state of vehicle is now tracked
+- For electric vehicles the battery capacity is taken from the vehicle specification
+
 ## [0.9] - 2025-11-09
 ### Fixed
 - Fixes login behaviour that was broken after a change on Skoda side
@@ -102,7 +107,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.9...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.10...HEAD
+[0.10]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.10
 [0.9]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.9
 [0.8.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.8.2
 [0.8.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.8.1

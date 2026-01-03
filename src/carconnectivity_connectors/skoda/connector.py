@@ -150,9 +150,9 @@ class Connector(BaseConnector):
             self.active_config['max_age'] = config['max_age']
         self.interval._set_value(timedelta(seconds=self.active_config['interval']))  # pylint: disable=protected-access
         self.active_config['online_timeout'] = self.active_config['interval'] + 60
-        self.online_timeout: timedelta = timedelta(seconds=self.active_config['online_timeout'])
         if 'online_timeout' in config:
             self.active_config['online_timeout'] = config['online_timeout']
+        self.online_timeout: timedelta = timedelta(seconds=self.active_config['online_timeout'])
 
         if self.active_config['username'] is None or self.active_config['password'] is None:
             raise AuthenticationError('Username or password not provided')
@@ -444,7 +444,11 @@ class Connector(BaseConnector):
             vehicle.last_measurement = last_measurement
 
     def _set_vehicle_offline(self, vehicle: SkodaVehicle) -> None:
-        vehicle.connection_state._set_value(vehicle.official_connection_state)  # pylint: disable=protected-access
+        last_online_measurement: Optional[datetime] = vehicle.last_measurement
+        # The car goes offline approximatly 2 minutes after the last measurement
+        if last_online_measurement is not None:
+            last_online_measurement += timedelta(seconds=120)
+        vehicle.connection_state._set_value(vehicle.official_connection_state, measured=last_online_measurement)  # pylint: disable=protected-access
         vehicle.online_timeout_timer = None
         if vehicle.official_connection_state is not None:
             LOG.info('Vehicle %s went from online to %s', vehicle.vin.value, vehicle.official_connection_state.value)

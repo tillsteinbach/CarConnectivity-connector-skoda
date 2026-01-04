@@ -24,35 +24,38 @@ class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
     This class extends the Charging class and includes an enumeration of various
     charging states specific to Skoda vehicles.
     """
-    def __init__(self, vehicle: ElectricVehicle | None = None, origin: Optional[Charging] = None) -> None:
+    def __init__(self, vehicle: Optional[ElectricVehicle] = None, origin: Optional[Charging] = None, initialization: Optional[Dict] = None) -> None:
         if origin is not None:
-            super().__init__(vehicle=vehicle, origin=origin)
+            super().__init__(vehicle=vehicle, origin=origin, initialization=initialization)
             self.settings: Charging.Settings = SkodaCharging.Settings(parent=self, origin=origin.settings)
         else:
-            super().__init__(vehicle=vehicle)
-            self.settings: Charging.Settings = SkodaCharging.Settings(parent=self, origin=self.settings)
+            super().__init__(vehicle=vehicle, initialization=initialization)
+            self.settings: Charging.Settings = SkodaCharging.Settings(parent=self, origin=self.settings, initialization=self.get_initialization('settings'))
         self.errors: Dict[str, Error] = {}
-        self.is_in_saved_location: BooleanAttribute = BooleanAttribute("is_in_saved_location", parent=self, tags={'connector_custom'})
+        self.is_in_saved_location: BooleanAttribute = BooleanAttribute("is_in_saved_location", parent=self, tags={'connector_custom'},
+                                                                       initialization=self.get_initialization('is_in_saved_location'))
 
     class Settings(Charging.Settings):
         """
         This class represents the settings for a skoda car charging.
         """
-        def __init__(self, parent: Optional[GenericObject] = None, origin: Optional[Charging.Settings] = None) -> None:
+        def __init__(self, parent: Optional[GenericObject] = None, origin: Optional[Charging.Settings] = None, initialization: Optional[Dict] = None) -> None:
             if origin is not None:
-                super().__init__(parent=parent, origin=origin)
+                super().__init__(parent=parent, origin=origin, initialization=initialization)
             else:
-                super().__init__(parent=parent)
-            self.preferred_charge_mode: EnumAttribute[SkodaCharging.SkodaChargeMode] = EnumAttribute("preferred_charge_mode", parent=self, 
-                                                                                                     value_type=SkodaCharging.SkodaChargeMode,
-                                                                                                     tags={'connector_custom'})
-            self.available_charge_modes: StringAttribute = StringAttribute("available_charge_modes", parent=self, tags={'connector_custom'})
-            self.charging_care_mode: EnumAttribute[SkodaCharging.SkodaChargingCareMode] = EnumAttribute("charging_care_mode", parent=self,
-                                                                                                        value_type=SkodaCharging.SkodaChargingCareMode,
-                                                                                                        tags={'connector_custom'})
+                super().__init__(parent=parent, initialization=initialization)
+            self.preferred_charge_mode: EnumAttribute[SkodaCharging.SkodaChargeMode] = \
+                EnumAttribute("preferred_charge_mode", parent=self, value_type=SkodaCharging.SkodaChargeMode, tags={'connector_custom'},
+                              initialization=self.get_initialization('preferred_charge_mode'))
+            self.available_charge_modes: StringAttribute = StringAttribute("available_charge_modes", parent=self, tags={'connector_custom'},
+                                                                           initialization=self.get_initialization('available_charge_modes'))
+            self.charging_care_mode: EnumAttribute[SkodaCharging.SkodaChargingCareMode] = \
+                EnumAttribute("charging_care_mode", parent=self, value_type=SkodaCharging.SkodaChargingCareMode, tags={'connector_custom'},
+                              initialization=self.get_initialization('charging_care_mode'))
             self.battery_support: EnumAttribute[SkodaCharging.SkodaBatterySupport] = EnumAttribute("battery_support", parent=self,
                                                                                                    value_type=SkodaCharging.SkodaBatterySupport,
-                                                                                                   tags={'connector_custom'})
+                                                                                                   tags={'connector_custom'},
+                                                                                                   initialization=self.get_initialization('battery_support'))
 
     class SkodaChargingState(Enum,):
         """

@@ -79,8 +79,9 @@ class Connector(BaseConnector):
     Attributes:
         max_age (Optional[int]): Maximum age for cached data in seconds.
     """
-    def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict) -> None:
-        BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config, log=LOG, api_log=LOG_API)
+    def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict, initialization: Optional[Dict] = None) -> None:
+        BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config, log=LOG, api_log=LOG_API,
+                               initialization=initialization)
 
         self._mqtt_client: SkodaMQTTClient = SkodaMQTTClient(skoda_connector=self)
 
@@ -88,8 +89,8 @@ class Connector(BaseConnector):
         self._background_connect_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
-        self.connection_state: EnumAttribute = EnumAttribute(name="connection_state", parent=self, value_type=ConnectionState,
-                                                             value=ConnectionState.DISCONNECTED, tags={'connector_custom'})
+        self.connection_state: EnumAttribute[ConnectionState] = EnumAttribute(name="connection_state", parent=self, value_type=ConnectionState,
+                                                                              value=ConnectionState.DISCONNECTED, tags={'connector_custom'})
         self.rest_connected: bool = False
         self.mqtt_connected: bool = False
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
@@ -345,7 +346,8 @@ class Connector(BaseConnector):
                         seen_vehicle_vins.add(vehicle_dict['vin'])
                         vehicle: Optional[SkodaVehicle] = garage.get_vehicle(vehicle_dict['vin'])  # pyright: ignore[reportAssignmentType]
                         if not vehicle:
-                            vehicle = SkodaVehicle(vin=vehicle_dict['vin'], garage=garage, managing_connector=self)
+                            vehicle = SkodaVehicle(vin=vehicle_dict['vin'], garage=garage, managing_connector=self,
+                                                   initialization=garage.get_initialization(vehicle_dict['vin']))
                             garage.add_vehicle(vehicle_dict['vin'], vehicle)
 
                         if 'licensePlate' in vehicle_dict and vehicle_dict['licensePlate'] is not None:
@@ -491,7 +493,7 @@ class Connector(BaseConnector):
             if 'status' in data and data['status'] is not None:
                 if 'state' in data['status'] and data['status']['state'] is not None:
                     if data['status']['state'] in [item.name for item in SkodaCharging.SkodaChargingState]:
-                        skoda_charging_state = SkodaCharging.SkodaChargingState[data['status']['state']]
+                        skoda_charging_state: SkodaCharging.SkodaChargingState = SkodaCharging.SkodaChargingState[data['status']['state']]
                         charging_state: Charging.ChargingState = mapping_skoda_charging_state[skoda_charging_state]
                     else:
                         LOG_API.info('Unkown charging state %s not in %s', data['status']['state'], str(SkodaCharging.SkodaChargingState))
@@ -1078,7 +1080,8 @@ class Connector(BaseConnector):
                         if window_id in vehicle.window_heatings.windows:
                             window: WindowHeatings.WindowHeating = vehicle.window_heatings.windows[window_id]
                         else:
-                            window = WindowHeatings.WindowHeating(window_id=window_id, window_heatings=vehicle.window_heatings)
+                            window = WindowHeatings.WindowHeating(window_id=window_id, window_heatings=vehicle.window_heatings,
+                                                                  initialization=vehicle.window_heatings.get_initialization(window_id))
                             vehicle.window_heatings.windows[window_id] = window
                         
                         if state.lower() in [item.value for item in WindowHeatings.HeatingState]:
@@ -1171,7 +1174,8 @@ class Connector(BaseConnector):
                             if vehicle.capabilities.has_capability(capability_id):
                                 capability: Capability = vehicle.capabilities.get_capability(capability_id)  # pyright: ignore[reportAssignmentType]
                             else:
-                                capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities)
+                                capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities,
+                                                        initialization=vehicle.capabilities.get_initialization(capability_id))
                                 vehicle.capabilities.add_capability(capability_id, capability)
                             if 'statuses' in capability_dict and capability_dict['statuses'] is not None:
                                 statuses = capability_dict['statuses']
@@ -1306,7 +1310,8 @@ class Connector(BaseConnector):
                                 vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
                             else:
                                 vehicle.images.images['car_picture'] = ImageAttribute(name="car_picture", parent=vehicle.images,
-                                                                                      value=img, tags={'carconnectivity'})
+                                                                                      value=img, tags={'carconnectivity'},
+                                                                                      initialization=vehicle.images.get_initialization('car_picture'))
         return vehicle
 
     def fetch_driving_range(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
@@ -1384,17 +1389,17 @@ class Connector(BaseConnector):
                         drive: GenericDrive = vehicle.drives.drives[drive_id]
                     else:
                         if engine_type == GenericDrive.Type.ELECTRIC:
-                            drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives)
+                            drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives, initialization=vehicle.drives.get_initialization(drive_id))
                         elif engine_type == GenericDrive.Type.DIESEL:
-                            drive = DieselDrive(drive_id=drive_id, drives=vehicle.drives)
+                            drive = DieselDrive(drive_id=drive_id, drives=vehicle.drives, initialization=vehicle.drives.get_initialization(drive_id))
                         elif engine_type in [GenericDrive.Type.FUEL,
                                              GenericDrive.Type.GASOLINE,
                                              GenericDrive.Type.PETROL,
                                              GenericDrive.Type.CNG,
                                              GenericDrive.Type.LPG]:
-                            drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives)
+                            drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives, initialization=vehicle.drives.get_initialization(drive_id))
                         else:
-                            drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives)
+                            drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives, initialization=vehicle.drives.get_initialization(drive_id))
                         drive.type._set_value(engine_type)  # pylint: disable=protected-access
                         vehicle.drives.add_drive(drive)
                         if engine_type == GenericDrive.Type.ELECTRIC:

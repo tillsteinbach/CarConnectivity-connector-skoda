@@ -43,10 +43,16 @@ class SkodaCharging(Charging):  # pylint: disable=too-many-instance-attributes
                 super().__init__(parent=parent, origin=origin)
             else:
                 super().__init__(parent=parent)
-            self.preferred_charge_mode: EnumAttribute = EnumAttribute("preferred_charge_mode", parent=self, tags={'connector_custom'})
+            self.preferred_charge_mode: EnumAttribute[SkodaCharging.SkodaChargeMode] = EnumAttribute("preferred_charge_mode", parent=self, 
+                                                                                                     value_type=SkodaCharging.SkodaChargeMode,
+                                                                                                     tags={'connector_custom'})
             self.available_charge_modes: StringAttribute = StringAttribute("available_charge_modes", parent=self, tags={'connector_custom'})
-            self.charging_care_mode: EnumAttribute = EnumAttribute("charging_care_mode", parent=self, tags={'connector_custom'})
-            self.battery_support: EnumAttribute = EnumAttribute("battery_support", parent=self, tags={'connector_custom'})
+            self.charging_care_mode: EnumAttribute[SkodaCharging.SkodaChargingCareMode] = EnumAttribute("charging_care_mode", parent=self,
+                                                                                                        value_type=SkodaCharging.SkodaChargingCareMode,
+                                                                                                        tags={'connector_custom'})
+            self.battery_support: EnumAttribute[SkodaCharging.SkodaBatterySupport] = EnumAttribute("battery_support", parent=self,
+                                                                                                   value_type=SkodaCharging.SkodaBatterySupport,
+                                                                                                   tags={'connector_custom'})
 
     class SkodaChargingState(Enum,):
         """

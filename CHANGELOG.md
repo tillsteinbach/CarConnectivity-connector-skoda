@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.11] - 2026-01-04
+### Added
+- Support for initializing attributes on startup form static entries in the configuration
+
+Note: This connector is required for compatibility with CarConnectivity version 0.11 and higher.
+
 ## [0.10] - 2026-01-01
 ### Added
 - Online state of vehicle is now tracked
@@ -107,7 +113,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.10...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11...HEAD
+[0.11]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11
 [0.10]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.10
 [0.9]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.9
 [0.8.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.8.2

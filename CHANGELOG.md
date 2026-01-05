@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.11.1] - 2026-01-05
+### Added
+- Adds new DRIVING state when the vehicle is in motion vs IGNITION_ON when parked with ignition on
+
+### Changed
+- Uses more reliable attributes for door locks
+
 ## [0.11] - 2026-01-04
 ### Added
 - Support for initializing attributes on startup form static entries in the configuration

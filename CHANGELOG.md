@@ -120,7 +120,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.1
 [0.11]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11
 [0.10]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.10
 [0.9]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.9

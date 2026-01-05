@@ -44,7 +44,7 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
             self.last_measurement: Optional[datetime] = origin.last_measurement
             self.official_connection_state: Optional[GenericVehicle.ConnectionState] = origin.official_connection_state
             self.online_timeout_timer: Optional[threading.Timer] = origin.online_timeout_timer
-            self.online_timeout_timer_lock: threading.LockType = threading.Lock()
+            self.online_timeout_timer_lock: threading.LockType = origin.online_timeout_timer_lock
             if SUPPORT_IMAGES:
                 self._car_images = origin._car_images
 
@@ -60,6 +60,7 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
             self.last_measurement = None
             self.official_connection_state = None
             self.online_timeout_timer: Optional[threading.Timer] = None
+            self.online_timeout_timer_lock: threading.LockType = threading.Lock()
             if SUPPORT_IMAGES:
                 self._car_images: Dict[str, Image.Image] = {}
         self.manufacturer._set_value(value='Škoda')  # pylint: disable=protected-access

@@ -422,7 +422,9 @@ class Connector(BaseConnector):
                     and vehicle.connection_state.value == GenericVehicle.ConnectionState.OFFLINE:
                 vehicle.state._set_value(GenericVehicle.State.OFFLINE, measured=vehicle.connection_state.last_updated)  # pylint: disable=protected-access
             elif vehicle.in_motion is not None and vehicle.in_motion.enabled and vehicle.in_motion.value:
-                vehicle.state._set_value(GenericVehicle.State.IGNITION_ON, measured=vehicle.in_motion.last_updated)  # pylint: disable=protected-access
+                vehicle.state._set_value(GenericVehicle.State.DRIVING, measured=vehicle.in_motion.last_updated)  # pylint: disable=protected-access
+            elif vehicle.ignition_on is not None and vehicle.ignition_on.enabled and vehicle.ignition_on.value:
+                vehicle.state._set_value(GenericVehicle.State.IGNITION_ON, measured=vehicle.ignition_on.last_updated)  # pylint: disable=protected-access
             elif vehicle.position is not None and vehicle.position.enabled and vehicle.position.position_type is not None \
                     and vehicle.position.position_type.enabled and vehicle.position.position_type.value == Position.PositionType.PARKING:
                 vehicle.state._set_value(GenericVehicle.State.PARKED, measured=vehicle.position.position_type.last_updated)  # pylint: disable=protected-access
@@ -431,29 +433,31 @@ class Connector(BaseConnector):
         return vehicle
 
     def _update_online_tracking(self, vehicle: SkodaVehicle, last_measurement: Optional[datetime]) -> None:
-        if last_measurement is not None and (vehicle.last_measurement is None or last_measurement > vehicle.last_measurement):
-            if (last_measurement + self.online_timeout) > datetime.now(tz=timezone.utc):
-                rest_timeout: timedelta = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
-                # Only set to online if the timeout is greater than 60 seconds
-                if rest_timeout.total_seconds() > 60:
-                    LOG.info('Vehicle %s is online', vehicle.vin.value)
-                    vehicle.connection_state._set_value(GenericVehicle.ConnectionState.ONLINE)  # pylint: disable=protected-access
-                    if vehicle.online_timeout_timer is not None:
-                        vehicle.online_timeout_timer.cancel()
-                    rest_timeout = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
-                    vehicle.online_timeout_timer = threading.Timer(rest_timeout.total_seconds(), self._set_vehicle_offline, args=[vehicle])
-                    vehicle.online_timeout_timer.start()
-            vehicle.last_measurement = last_measurement
+        with vehicle.online_timeout_timer_lock:
+            if last_measurement is not None and (vehicle.last_measurement is None or last_measurement > vehicle.last_measurement):
+                if (last_measurement + self.online_timeout) > datetime.now(tz=timezone.utc):
+                    rest_timeout: timedelta = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
+                    # Only set to online if the timeout is greater than 60 seconds
+                    if rest_timeout.total_seconds() > 60:
+                        LOG.info('Vehicle %s is online', vehicle.vin.value)
+                        vehicle.connection_state._set_value(GenericVehicle.ConnectionState.ONLINE)  # pylint: disable=protected-access
+                        if vehicle.online_timeout_timer is not None:
+                            vehicle.online_timeout_timer.cancel()
+                        rest_timeout = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
+                        vehicle.online_timeout_timer = threading.Timer(rest_timeout.total_seconds(), self._set_vehicle_offline, args=[vehicle])
+                        vehicle.online_timeout_timer.start()
+                vehicle.last_measurement = last_measurement
 
     def _set_vehicle_offline(self, vehicle: SkodaVehicle) -> None:
-        last_online_measurement: Optional[datetime] = vehicle.last_measurement
-        # The car goes offline approximatly 2 minutes after the last measurement
-        if last_online_measurement is not None:
-            last_online_measurement += timedelta(seconds=120)
-        vehicle.connection_state._set_value(vehicle.official_connection_state, measured=last_online_measurement)  # pylint: disable=protected-access
-        vehicle.online_timeout_timer = None
-        if vehicle.official_connection_state is not None:
-            LOG.info('Vehicle %s went from online to %s', vehicle.vin.value, vehicle.official_connection_state.value)
+        with vehicle.online_timeout_timer_lock:
+            last_online_measurement: Optional[datetime] = vehicle.last_measurement
+            # The car goes offline approximatly 2 minutes after the last measurement
+            if last_online_measurement is not None:
+                last_online_measurement += timedelta(seconds=120)
+            vehicle.connection_state._set_value(vehicle.official_connection_state, measured=last_online_measurement)  # pylint: disable=protected-access
+            vehicle.online_timeout_timer = None
+            if vehicle.official_connection_state is not None:
+                LOG.info('Vehicle %s went from online to %s', vehicle.vin.value, vehicle.official_connection_state.value)
 
     def fetch_charging(self, vehicle: SkodaElectricVehicle, no_cache: bool = False) -> SkodaElectricVehicle:
         """
@@ -713,7 +717,11 @@ class Connector(BaseConnector):
                 vehicle.in_motion._set_value(data['inMotion'])  # pylint: disable=protected-access
             else:
                 vehicle.in_motion._set_value(None)  # pylint: disable=protected-access
-            log_extra_keys(LOG_API, 'connection status', data,  {'unreachable', 'inMotion'})
+            if 'ignitionOn' in data and data['ignitionOn'] is not None:
+                vehicle.ignition_on._set_value(data['ignitionOn'])  # pylint: disable=protected-access
+            else:
+                vehicle.ignition_on._set_value(None)  # pylint: disable=protected-access
+            log_extra_keys(LOG_API, 'connection status', data,  {'unreachable', 'inMotion', 'ignitionOn'})
         return vehicle
 
     def fetch_position(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

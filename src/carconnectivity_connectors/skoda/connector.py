@@ -1478,7 +1478,9 @@ class Connector(BaseConnector):
             else:
                 captured_at: Optional[datetime] = None
             if 'overall' in vehicle_status_data and vehicle_status_data['overall'] is not None:
-                if 'doorsLocked' in vehicle_status_data['overall'] and vehicle_status_data['overall']['doorsLocked'] is not None \
+                if 'reliableLockStatus' not in vehicle_status_data['overall'] and 'locked' not in vehicle_status_data['overall'] \
+                        and 'doors' not in vehicle_status_data['overall'] \
+                        and 'doorsLocked' in vehicle_status_data['overall'] and vehicle_status_data['overall']['doorsLocked'] is not None \
                         and vehicle.doors is not None:
                     if vehicle_status_data['overall']['doorsLocked'] == 'YES':
                         vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
@@ -1502,7 +1504,17 @@ class Connector(BaseConnector):
                         LOG_API.info('Unknown doorsLocked state %s', vehicle_status_data['overall']['doorsLocked'])
                         vehicle.doors.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
                         vehicle.doors.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                if 'locked' in vehicle_status_data['overall'] and vehicle_status_data['overall']['locked'] is not None:
+                if 'reliableLockStatus' in vehicle_status_data['overall'] and vehicle_status_data['overall']['reliableLockStatus'] is not None:
+                    if vehicle_status_data['overall']['reliableLockStatus'] == 'LOCKED':
+                        vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
+                    elif vehicle_status_data['overall']['reliableLockStatus'] == 'UNLOCKED':
+                        vehicle.doors.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
+                    elif vehicle_status_data['overall']['reliableLockStatus'] == 'UNKNOWN':
+                        vehicle.doors.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        LOG_API.info('Unknown reliableLockStatus state %s', vehicle_status_data['overall']['reliableLockStatus'])
+                        vehicle.doors.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                elif 'locked' in vehicle_status_data['overall'] and vehicle_status_data['overall']['locked'] is not None:
                     if vehicle_status_data['overall']['locked'] == 'YES':
                         vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
                     elif vehicle_status_data['overall']['locked'] == 'NO':
@@ -1550,7 +1562,8 @@ class Connector(BaseConnector):
                                                                                            'locked',
                                                                                            'doors',
                                                                                            'windows',
-                                                                                           'lights'})
+                                                                                           'lights',
+                                                                                           'reliableLockStatus'})
             log_extra_keys(LOG_API, f'/api/v2/vehicle-status/{vin}', vehicle_status_data, {'overall', 'carCapturedTimestamp'})
         return vehicle
 

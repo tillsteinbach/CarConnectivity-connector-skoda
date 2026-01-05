@@ -767,6 +767,7 @@ class Connector(BaseConnector):
                             vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
                             vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
                             vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API, 'gpsCoordinates', position_dict['gpsCoordinates'], {'latitude', 'longitude'})
                     else:
                         vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
                         vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access

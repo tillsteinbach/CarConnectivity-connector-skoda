@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.11.2] - 2026-01-05
+### Fixed
+- Fixes bug with online timeout timer locking mechanism
+
 ## [0.11.1] - 2026-01-05
 ### Added
 - Adds new DRIVING state when the vehicle is in motion vs IGNITION_ON when parked with ignition on
@@ -120,7 +124,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11.1...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.2
 [0.11.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.1
 [0.11]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11
 [0.10]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.10

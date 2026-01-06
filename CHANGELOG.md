@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.11.3] - 2026-01-06
+### Changed
+- Adds fetching connection status when MQTT push message is received. This allows to have more up-to-date connection status information and improves timing of state changes.
+
 ## [0.11.2] - 2026-01-05
 ### Fixed
 - Fixes bug with online timeout timer locking mechanism
@@ -124,7 +128,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11.2...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11.3...HEAD
+[0.11.3]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.3
 [0.11.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.2
 [0.11.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.1
 [0.11]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11

@@ -235,6 +235,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                     for event in service_events:
                         possible_topics.add(f'{user_id}/{vin}/service-event/{event}')
 
+                    # Subscribe wildcard topics
+                    self.subscribe(f'{user_id}/{vin}/#')
                     # Subscribe to all topics
                     for topic in possible_topics:
                         if topic not in self.subscribed_topics:
@@ -504,7 +506,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                             skoda_charging_mode = SkodaCharging.SkodaChargeMode(data['data']['mode'])
                                         else:
                                             LOG_API.info('Unkown charging mode %s not in %s', data['data']['mode'], str(SkodaCharging.SkodaChargeMode))
-                                            skoda_charging_mode = Charging.ChargingState.UNKNOWN
+                                            skoda_charging_mode = SkodaCharging.SkodaChargeMode.UNKNOWN
                                         # pylint: disable-next=protected-access
                                         vehicle.charging.settings.preferred_charge_mode._set_value(value=skoda_charging_mode, measured=measured_at)
                                     if 'state' in data['data'] and data['data']['state'] is not None:
@@ -587,6 +589,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     """
                                     vin = vehicle.id
                                     self.delayed_access_function_timers.pop(vin)
+                                    try:
+                                        self._skoda_connector.fetch_connection_status(vehicle, no_cache=True)
+                                    except CarConnectivityError as e:
+                                        LOG.error('Error while fetching connection status: %s', e)
                                     try:
                                         self._skoda_connector.fetch_vehicle_status(vehicle, no_cache=True)
                                     except CarConnectivityError as e:

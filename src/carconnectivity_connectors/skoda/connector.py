@@ -681,7 +681,7 @@ class Connector(BaseConnector):
                     vehicle.charging.errors.clear()
             log_extra_keys(LOG_API, 'charging data', data,  {'carCapturedTimestamp', 'status', 'isVehicleInSavedLocation', 'errors', 'settings'})
         return vehicle
-    
+
     def fetch_connection_status(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:
         """
         Fetches the connection status of the given Skoda vehicle and updates its connection attributes.

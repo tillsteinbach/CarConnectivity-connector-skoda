@@ -435,18 +435,15 @@ class Connector(BaseConnector):
     def _update_online_tracking(self, vehicle: SkodaVehicle, last_measurement: Optional[datetime]) -> None:
         with vehicle.online_timeout_timer_lock:
             if last_measurement is not None and (vehicle.last_measurement is None or last_measurement > vehicle.last_measurement):
-                if (last_measurement + self.online_timeout) > datetime.now(tz=timezone.utc):
-                    rest_timeout: timedelta = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
-                    # Only set to online if the timeout is greater than 60 seconds
-                    if rest_timeout.total_seconds() > 60:
-                        LOG.info('Vehicle %s is online', vehicle.vin.value)
-                        vehicle.connection_state._set_value(GenericVehicle.ConnectionState.ONLINE)  # pylint: disable=protected-access
-                        if vehicle.online_timeout_timer is not None:
-                            vehicle.online_timeout_timer.cancel()
-                        rest_timeout = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
-                        vehicle.online_timeout_timer = threading.Timer(rest_timeout.total_seconds(), self._set_vehicle_offline, args=[vehicle])
-                        vehicle.online_timeout_timer.start()
+                rest_timeout: timedelta = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
                 vehicle.last_measurement = last_measurement
+                if rest_timeout.total_seconds() > 0:
+                    LOG.info('Vehicle %s is online', vehicle.vin.value)
+                    vehicle.connection_state._set_value(GenericVehicle.ConnectionState.ONLINE)  # pylint: disable=protected-access
+                    if vehicle.online_timeout_timer is not None:
+                        vehicle.online_timeout_timer.cancel()
+                    vehicle.online_timeout_timer = threading.Timer(rest_timeout.total_seconds(), self._set_vehicle_offline, args=[vehicle])
+                    vehicle.online_timeout_timer.start()
 
     def _set_vehicle_offline(self, vehicle: SkodaVehicle) -> None:
         with vehicle.online_timeout_timer_lock:

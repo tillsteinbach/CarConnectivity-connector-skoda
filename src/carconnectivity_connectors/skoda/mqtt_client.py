@@ -501,7 +501,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                         if 'name' in data and data['name'] == 'vehicle-awake':
                             if isinstance(vehicle, SkodaVehicle):
                                 self._skoda_connector._update_online_tracking(vehicle=vehicle, last_measurement=measured_at)  # pylint: disable=protected-access
-                                self._skoda_connector.fetch_connection_status(vehicle, no_cache=True)
+                                vehicle = self._skoda_connector.fetch_connection_status(vehicle, no_cache=True)
+                                vehicle = self._skoda_connector.decide_state(vehicle)
                                 self._skoda_connector.car_connectivity.transaction_end()
                             return
                         else:
@@ -529,6 +530,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                             self._skoda_connector.fetch_position(vehicle, no_cache=True)
                                         except CarConnectivityError as e:
                                             LOG.error('Error while fetching position: %s', e)
+                                    vehicle = self._skoda_connector.decide_state(vehicle)
+                                    self._skoda_connector.car_connectivity.transaction_end()
                             return
                         else:
                             LOG_API.info('Received unknown name %s for vehicle event %s for vehicle %s from user %s: %s', data['name'],

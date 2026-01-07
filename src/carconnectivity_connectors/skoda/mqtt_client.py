@@ -192,6 +192,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                                 'guest-user-nomination',
                                                 'primary-user-nomination'}
                     vehicle_status_events: Set[str] = {'vehicle-connection-status'}
+                    vehicle_event: Set[str] = {'vehicle-connection-status-update'
+                                               'vehicle-ignition-status'}
                     operation_requests: Set[str] = {
                         'air-conditioning/set-air-conditioning-at-unlock',
                         'air-conditioning/set-air-conditioning-seats-heating',
@@ -220,16 +222,20 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                     service_events: Set[str] = {
                         'air-conditioning',
                         'charging',
+                        'charging-statistics',
                         'departure',
                         'vehicle-status/access',
-                        'vehicle-status/lights'
-                    }
+                        'vehicle-status/lights',
+                        'vehicle-status/odometer'
+                        }
                     possible_topics: Set[str] = set()
                     # Compile all possible topics
                     for event in account_events:
                         possible_topics.add(f'{user_id}/{vin}/account-event/{event}')
                     for event in vehicle_status_events:
                         possible_topics.add(f'{user_id}/{vin}/vehicle-status/{event}')
+                    for event in vehicle_event:
+                        possible_topics.add(f'{user_id}/{vin}/vehicle-event/{event}')
                     for event in operation_requests:
                         possible_topics.add(f'{user_id}/{vin}/operation-request/{event}')
                     for event in service_events:
@@ -477,6 +483,61 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             return
 
         # service_events
+        match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/vehicle-event/(?P<vehicle_event>[a-zA-Z0-9-_/]+)$', msg.topic)
+        if match:
+            user_id: str = match.group('user_id')
+            vin: str = match.group('vin')
+            vehicle_event: str = match.group('vehicle_event')
+            data: Dict[str, Any] = json.loads(msg.payload)
+            if data is not None:
+                if 'timestamp' in data and data['timestamp'] is not None:
+                    measured_at: datetime = robust_time_parse(data['timestamp'])
+                    vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                else:
+                    measured_at: datetime = datetime.now(tz=timezone.utc)
+                if vehicle_event == 'vehicle-connection-status-update':
+                    vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                    if vehicle is not None:
+                        if 'name' in data and data['name'] == 'vehicle-awake':
+                            if isinstance(vehicle, SkodaVehicle):
+                                self._skoda_connector._update_online_tracking(vehicle=vehicle, last_measurement=measured_at)  # pylint: disable=protected-access
+                                self._skoda_connector.fetch_connection_status(vehicle, no_cache=True)
+                                self._skoda_connector.car_connectivity.transaction_end()
+                            return
+                        else:
+                            LOG_API.info('Received unknown name %s for vehicle event %s for vehicle %s from user %s: %s', data['name'],
+                                         vehicle_event, vin, user_id, msg.payload)
+                            return
+                elif vehicle_event == 'vehicle-ignition-status':
+                    vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                    if vehicle is not None:
+                        if 'name' in data and data['name'] == 'vehicle-ignition-status-changed':
+                            if 'data' in data and data['data'] is not None and 'ignitionStatus' in data['data']:
+                                ignition_status: str = data['data']['ignitionStatus']
+                                if ignition_status == 'ON':
+                                    if isinstance(vehicle, SkodaVehicle):
+                                        # pylint: disable-next=protected-access
+                                        vehicle.ignition_on._set_value(value=True, measured=measured_at)
+                                elif ignition_status == 'OFF':
+                                    if isinstance(vehicle, SkodaVehicle):
+                                        # pylint: disable-next=protected-access
+                                        vehicle.ignition_on._set_value(value=False, measured=measured_at)
+                                if isinstance(vehicle, SkodaVehicle):
+                                    if vehicle.capabilities is not None and vehicle.capabilities.enabled \
+                                            and vehicle.capabilities.has_capability('PARKING_POSITION'):
+                                        try:
+                                            self._skoda_connector.fetch_position(vehicle, no_cache=True)
+                                        except CarConnectivityError as e:
+                                            LOG.error('Error while fetching position: %s', e)
+                            return
+                        else:
+                            LOG_API.info('Received unknown name %s for vehicle event %s for vehicle %s from user %s: %s', data['name'],
+                                         vehicle_event, vin, user_id, msg.payload)
+                            return
+                else:
+                    LOG_API.info('Received unknown vehicle event %s for vehicle %s from user %s: %s', vehicle_event, vin, user_id, msg.payload)
+            return
+        # service_events
         match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/service-event/(?P<service_event>[a-zA-Z0-9-_/]+)$', msg.topic)
         if match:
             user_id: str = match.group('user_id')
@@ -486,9 +547,6 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             if data is not None:
                 if 'timestamp' in data and data['timestamp'] is not None:
                     measured_at: datetime = robust_time_parse(data['timestamp'])
-                    vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
-                    if isinstance(vehicle, SkodaVehicle):
-                        self._skoda_connector._update_online_tracking(vehicle=vehicle, last_measurement=measured_at)  # pylint: disable=protected-access
                 else:
                     measured_at: datetime = datetime.now(tz=timezone.utc)
                 if service_event == 'charging':
@@ -496,66 +554,15 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                         if 'data' in data and data['data'] is not None:
                             vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
                             if isinstance(vehicle, SkodaElectricVehicle):
-                                electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
-                                if electric_drive is not None:
-                                    charging_state: Optional[Charging.ChargingState] = vehicle.charging.state.value
-                                    old_charging_state: Optional[Charging.ChargingState] = charging_state
-                                    if 'mode' in data['data'] and data['data']['mode'] is not None \
-                                            and vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
-                                        if data['data']['mode'] in [item.value for item in SkodaCharging.SkodaChargeMode]:
-                                            skoda_charging_mode = SkodaCharging.SkodaChargeMode(data['data']['mode'])
-                                        else:
-                                            LOG_API.info('Unkown charging mode %s not in %s', data['data']['mode'], str(SkodaCharging.SkodaChargeMode))
-                                            skoda_charging_mode = SkodaCharging.SkodaChargeMode.UNKNOWN
-                                        # pylint: disable-next=protected-access
-                                        vehicle.charging.settings.preferred_charge_mode._set_value(value=skoda_charging_mode, measured=measured_at)
-                                    if 'state' in data['data'] and data['data']['state'] is not None:
-                                        if data['data']['state'] in [item.value for item in SkodaCharging.SkodaChargingState]:
-                                            skoda_charging_state = SkodaCharging.SkodaChargingState(data['data']['state'])
-                                            charging_state = mapping_skoda_charging_state[skoda_charging_state]
-                                        else:
-                                            LOG_API.info('Unkown charging state %s not in %s', data['data']['state'], str(SkodaCharging.SkodaChargingState))
-                                            charging_state = Charging.ChargingState.UNKNOWN
-                                        # pylint: disable-next=protected-access
-                                        vehicle.charging.state._set_value(value=charging_state, measured=measured_at)
-                                        if charging_state == Charging.ChargingState.OFF:
-                                            # pylint: disable-next=protected-access
-                                            vehicle.charging.type._set_value(value=Charging.ChargingType.OFF, measured=measured_at)
-                                            # pylint: disable-next=protected-access
-                                            vehicle.charging.rate._set_value(value=0, measured=measured_at, unit=Speed.KMH)
-                                            # pylint: disable-next=protected-access
-                                            vehicle.charging.power._set_value(value=0, measured=measured_at, unit=Power.KW)
-                                    if 'soc' in data['data'] and data['data']['soc'] is not None:
-                                        if isinstance(data['data']['soc'], str):
-                                            data['data']['soc'] = int(data['data']['soc'])
-                                        electric_drive.level._set_value(measured=measured_at, value=data['data']['soc'])  # pylint: disable=protected-access
-                                    if 'chargedRange' in data['data'] and data['data']['chargedRange'] is not None:
-                                        # pylint: disable-next=protected-access
-                                        electric_drive.range._set_value(measured=measured_at, value=data['data']['chargedRange'], unit=Length.KM)
-                                    # If charging state changed, fetch charging again
-                                    if old_charging_state != charging_state:
-                                        try:
-                                            self._skoda_connector.fetch_charging(vehicle, no_cache=True)
-                                            self._skoda_connector.car_connectivity.transaction_end()
-                                        except CarConnectivityError as e:
-                                            LOG.error('Error while fetching charging: %s', e)
-                                if 'timeToFinish' in data['data'] and data['data']['timeToFinish'] is not None \
-                                        and vehicle.charging is not None:
-                                    try:
-                                        remaining_duration: Optional[timedelta] = timedelta(minutes=int(data['data']['timeToFinish']))
-                                        estimated_date_reached: Optional[datetime] = measured_at + remaining_duration
-                                        estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
-                                    except ValueError:
-                                        estimated_date_reached: Optional[datetime] = None
-                                    # pylint: disable-next=protected-access
-                                    vehicle.charging.estimated_date_reached._set_value(measured=measured_at, value=estimated_date_reached)
-                                log_extra_keys(LOG_API, 'data', data['data'],  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish', 'state', 'mode'})
+                                self.__parse_charging_message_data(vehicle=vehicle, data=data['data'], measured_at=measured_at)
+                                self._skoda_connector.car_connectivity.transaction_end()
                                 LOG.debug('Received %s event for vehicle %s from user %s', data['name'], vin, user_id)
                                 return
                             else:
                                 LOG.debug('Discarded %s event for vehicle %s from user %s: vehicle is not an electric vehicle', data['name'], vin, user_id)
-                    LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
-                                 service_event, vin, user_id, msg.payload)
+                    else:
+                        LOG_API.info('Received unkown event name %s service event %s for vehicle %s from user %s: %s', data['name'],
+                                     service_event, vin, user_id, msg.payload)
                     return
                 elif service_event == 'air-conditioning':
                     if 'name' in data and data['name'] == 'change-remaining-time':
@@ -575,8 +582,36 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                 vehicle.climatization.state._set_value(value=Climatization.ClimatizationState.OFF, measured=measured_at)
                                 # pylint: disable-next=protected-access
                                 vehicle.climatization.estimated_date_reached._set_value(value=measured_at, measured=measured_at)
-                    LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
-                                 service_event, vin, user_id, msg.payload)
+                    else:
+                        LOG_API.info('Received unknown event name %s service event %s for vehicle %s from user %s: %s', data['name'],
+                                     service_event, vin, user_id, msg.payload)
+                    return
+                elif service_event == 'charging-statistics':
+                    if 'name' in data and data['name'] == 'charging-plugstatus-disconnected':
+                        vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                        if isinstance(vehicle, SkodaElectricVehicle):
+                            try:
+                                self._skoda_connector.fetch_charging(vehicle, no_cache=True)
+                                self._skoda_connector.car_connectivity.transaction_end()
+                            except CarConnectivityError as e:
+                                LOG.error('Error while fetching charging statistics: %s', e)
+                    elif 'name' in data and data['name'] == 'charging-started':
+                        vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                        if isinstance(vehicle, SkodaElectricVehicle):
+                            try:
+                                self._skoda_connector.fetch_charging(vehicle, no_cache=True)
+                                self._skoda_connector.car_connectivity.transaction_end()
+                            except CarConnectivityError as e:
+                                LOG.error('Error while fetching charging statistics: %s', e)
+                    elif 'name' in data and data['name'] == 'charging-update':
+                        vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                        if isinstance(vehicle, SkodaElectricVehicle):
+                            self.__parse_charging_message_data(vehicle=vehicle, data=data['data'], measured_at=measured_at)
+                            self._skoda_connector.car_connectivity.transaction_end()
+
+                    else:
+                        LOG_API.info('Received unknown event name %s service event %s for vehicle %s from user %s: %s', data['name'],
+                                     service_event, vin, user_id, msg.payload)
                     return
                 elif service_event == 'vehicle-status/access':
                     if 'name' in data and data['name'] == 'change-access':
@@ -590,25 +625,9 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     vin = vehicle.id
                                     self.delayed_access_function_timers.pop(vin)
                                     try:
-                                        self._skoda_connector.fetch_connection_status(vehicle, no_cache=True)
-                                    except CarConnectivityError as e:
-                                        LOG.error('Error while fetching connection status: %s', e)
-                                    try:
                                         self._skoda_connector.fetch_vehicle_status(vehicle, no_cache=True)
                                     except CarConnectivityError as e:
                                         LOG.error('Error while fetching vehicle status: %s', e)
-                                    if vehicle.capabilities is not None and vehicle.capabilities.enabled \
-                                            and vehicle.capabilities.has_capability('CHARGING') and isinstance(vehicle, SkodaElectricVehicle):
-                                        try:
-                                            self._skoda_connector.fetch_charging(vehicle, no_cache=True)
-                                        except CarConnectivityError as e:
-                                            LOG.error('Error while fetching charging: %s', e)
-                                    if vehicle.capabilities is not None and vehicle.capabilities.enabled \
-                                            and vehicle.capabilities.has_capability('PARKING_POSITION'):
-                                        try:
-                                            self._skoda_connector.fetch_position(vehicle, no_cache=True)
-                                        except CarConnectivityError as e:
-                                            LOG.error('Error while fetching position: %s', e)
                                     if vehicle.capabilities is not None and vehicle.capabilities.enabled \
                                             and vehicle.capabilities.has_capability('AIR_CONDITIONING'):
                                         try:
@@ -635,10 +654,17 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     self._skoda_connector.car_connectivity.transaction_end()
                                 except CarConnectivityError as e:
                                     LOG.error('Error while fetching vehicle status: %s', e)
-
-                    LOG_API.info('Received event name %s service event %s for vehicle %s from user %s: %s', data['name'],
-                                 service_event, vin, user_id, msg.payload)
-                    return
+                elif service_event == 'vehicle-status/odometer':
+                    if 'name' in data and data['name'] == 'change-odometer':
+                        if 'data' in data and data['data'] is not None:
+                            vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                            if isinstance(vehicle, SkodaVehicle):
+                                try:
+                                    self._skoda_connector.fetch_maintenance(vehicle, no_cache=True)  # todo: check if there is a better way to fetch odometer
+                                    self._skoda_connector.car_connectivity.transaction_end()
+                                except CarConnectivityError as e:
+                                    LOG.error('Error while fetching vehicle status: %s', e)
+                return
             LOG_API.info('Received unknown service event %s for vehicle %s from user %s: %s', service_event, vin, user_id, msg.payload)
             return
         # operation-requests
@@ -695,3 +721,100 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                 LOG_API.info('Received unknown operation request %s for vehicle %s from user %s: %s', operation_request, vin, user_id, msg.payload)
                 return
         LOG_API.info('I don\'t understand message %s: %s', msg.topic, msg.payload)
+
+    def __parse_charging_message_data(self, vehicle: SkodaElectricVehicle, data: Dict[str, Any], measured_at: datetime) -> None:
+        """
+        Parse charging data from MQTT message and update vehicle state.
+
+        This method processes the charging data received in the MQTT message payload
+        and updates the corresponding vehicle's charging state accordingly.
+
+        Args:
+            vehicle: The vehicle instance to update.
+            data: The dictionary containing charging data.
+
+        Returns:
+            None
+        """
+        electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
+        if electric_drive is not None:
+            charging_state: Optional[Charging.ChargingState] = vehicle.charging.state.value
+            old_charging_state: Optional[Charging.ChargingState] = charging_state
+            if 'carCapturedTimestamp' in data and data['carCapturedTimestamp'] is not None:
+                measured_at = robust_time_parse(data['carCapturedTimestamp'])
+                self._skoda_connector._update_online_tracking(vehicle=vehicle, last_measurement=measured_at)  # pylint: disable=protected-access
+            if 'mode' in data['data'] and data['data']['mode'] is not None \
+                    and vehicle.charging is not None and isinstance(vehicle.charging.settings, SkodaCharging.Settings):
+                if data['data']['mode'] in [item.value for item in SkodaCharging.SkodaChargeMode]:
+                    skoda_charging_mode = SkodaCharging.SkodaChargeMode(data['data']['mode'])
+                else:
+                    LOG_API.info('Unkown charging mode %s not in %s', data['data']['mode'], str(SkodaCharging.SkodaChargeMode))
+                    skoda_charging_mode = SkodaCharging.SkodaChargeMode.UNKNOWN
+                # pylint: disable-next=protected-access
+                vehicle.charging.settings.preferred_charge_mode._set_value(value=skoda_charging_mode, measured=measured_at)
+            if 'state' in data['data'] and data['data']['state'] is not None:
+                if data['data']['state'] in [item.value for item in SkodaCharging.SkodaChargingState]:
+                    skoda_charging_state = SkodaCharging.SkodaChargingState(data['data']['state'])
+                    charging_state = mapping_skoda_charging_state[skoda_charging_state]
+                else:
+                    LOG_API.info('Unkown charging state %s not in %s', data['data']['state'], str(SkodaCharging.SkodaChargingState))
+                    charging_state = Charging.ChargingState.UNKNOWN
+                # pylint: disable-next=protected-access
+                vehicle.charging.state._set_value(value=charging_state, measured=measured_at)
+                if charging_state == Charging.ChargingState.OFF:
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.type._set_value(value=Charging.ChargingType.OFF, measured=measured_at)
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.rate._set_value(value=0, measured=measured_at, unit=Speed.KMH)
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.power._set_value(value=0, measured=measured_at, unit=Power.KW)
+            if 'soc' in data['data'] and data['data']['soc'] is not None:
+                if isinstance(data['data']['soc'], str):
+                    data['data']['soc'] = int(data['data']['soc'])
+                electric_drive.level._set_value(measured=measured_at, value=data['data']['soc'])  # pylint: disable=protected-access
+            if 'chargedRange' in data['data'] and data['data']['chargedRange'] is not None:
+                # pylint: disable-next=protected-access
+                electric_drive.range._set_value(measured=measured_at, value=data['data']['chargedRange'], unit=Length.KM)
+            # If charging state changed, fetch charging again
+            if old_charging_state != charging_state:
+                try:
+                    self._skoda_connector.fetch_charging(vehicle, no_cache=True)
+                    self._skoda_connector.car_connectivity.transaction_end()
+                except CarConnectivityError as e:
+                    LOG.error('Error while fetching charging: %s', e)
+        if 'timeToFinish' in data['data'] and data['data']['timeToFinish'] is not None \
+                and vehicle.charging is not None:
+            try:
+                remaining_duration: Optional[timedelta] = timedelta(minutes=int(data['data']['timeToFinish']))
+                estimated_date_reached: Optional[datetime] = measured_at + remaining_duration
+                estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
+            except ValueError:
+                estimated_date_reached: Optional[datetime] = None
+            # pylint: disable-next=protected-access
+            vehicle.charging.estimated_date_reached._set_value(measured=measured_at, value=estimated_date_reached)
+        if 'chargingType' in data['data'] and data['data']['chargingType'] is not None \
+                and vehicle.charging is not None:
+            if data['data']['chargingType'] in [item.value for item in Charging.ChargingType]:
+                charging_type: Charging.ChargingType = Charging.ChargingType(data['data']['chargingType'])
+            else:
+                LOG_API.info('Unkown charging type %s not in %s', data['data']['chargingType'], str(Charging.ChargingType))
+                charging_type = Charging.ChargingType.UNKNOWN
+            vehicle.charging.type._set_value(value=charging_type, measured=measured_at)  # pylint: disable=protected-access
+        if 'power' in data['data'] and data['data']['power'] is not None \
+                and vehicle.charging is not None:
+            try:
+                power_value: float = float(data['data']['power'])
+                vehicle.charging.power._set_value(value=power_value, measured=measured_at, unit=Power.KW)  # pylint: disable=protected-access
+            except ValueError:
+                LOG_API.warning('Invalid power value received: %s', data['data']['power'])
+        if 'odometer' in data['data'] and data['data']['odometer'] is not None:
+            if 'odometerTimestamp' in data['data'] and data['data']['odometerTimestamp'] is not None:
+                measured_at = robust_time_parse(data['data']['odometerTimestamp'])
+                self._skoda_connector._update_online_tracking(vehicle=vehicle, last_measurement=measured_at)  # pylint: disable=protected-access
+            try:
+                odometer_value: float = float(data['data']['odometer'])
+                vehicle.odometer._set_value(value=odometer_value, measured=measured_at, unit=Length.KM)  # pylint: disable=protected-access
+            except ValueError:
+                LOG_API.warning('Invalid odometer value received: %s', data['data']['odometer'])
+        log_extra_keys(LOG_API, 'data', data['data'],  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish', 'state', 'mode', 'chargingType', 'odometer',
+                                                        'odometerTimestamp', 'carCapturedTimestamp'})

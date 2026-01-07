@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.11.5] - 2026-01-08
+## Fixed
+- Fixes bug where the vehicle state was not updated on MQTT push messages
+
 ## [0.11.4] - 2026-01-07
 ### Added
 - Adds reaction on previously unknown MQTT push messages
@@ -132,7 +136,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11.4...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11.5...HEAD
+[0.11.5]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.5
 [0.11.4]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.4
 [0.11.3]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.3
 [0.11.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.2

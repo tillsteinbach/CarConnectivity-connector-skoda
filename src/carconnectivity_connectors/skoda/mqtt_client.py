@@ -8,7 +8,7 @@ import uuid
 import ssl
 import json
 import threading
-from datetime import timedelta, timezone
+from datetime import timedelta, timezone, datetime
 
 from paho.mqtt.client import Client
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion, MQTTErrorCode
@@ -30,7 +30,6 @@ from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_sko
 
 if TYPE_CHECKING:
     from typing import Set, Dict, Any, Optional, List
-    from datetime import datetime
 
     from paho.mqtt.client import MQTTMessage, DisconnectFlags, ConnectFlags
     from paho.mqtt.reasoncodes import ReasonCode
@@ -482,6 +481,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             LOG_API.debug('MQTT topic %s: ignoring empty message', msg.topic)
             return
 
+        self._skoda_connector.last_event._set_value(value=datetime.now(tz=timezone.utc))  # pylint: disable=protected-access
+
         # service_events
         match = re.match(r'^(?P<user_id>[0-9a-fA-F-]+)/(?P<vin>[A-Z0-9]+)/vehicle-event/(?P<vehicle_event>[a-zA-Z0-9-_/]+)$', msg.topic)
         if match:
@@ -504,6 +505,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                 vehicle = self._skoda_connector.fetch_connection_status(vehicle, no_cache=True)
                                 vehicle = self._skoda_connector.decide_state(vehicle)
                                 self._skoda_connector.car_connectivity.transaction_end()
+                                LOG_API.info('Vehicle %s is awake', vin)
                             return
                         else:
                             LOG_API.info('Received unknown name %s for vehicle event %s for vehicle %s from user %s: %s', data['name'],
@@ -519,10 +521,12 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                     if isinstance(vehicle, SkodaVehicle):
                                         # pylint: disable-next=protected-access
                                         vehicle.ignition_on._set_value(value=True, measured=measured_at)
+                                        LOG.info('Vehicle %s ignition turned ON', vin)
                                 elif ignition_status == 'OFF':
                                     if isinstance(vehicle, SkodaVehicle):
                                         # pylint: disable-next=protected-access
                                         vehicle.ignition_on._set_value(value=False, measured=measured_at)
+                                        LOG.info('Vehicle %s ignition turned OFF', vin)
                                 if isinstance(vehicle, SkodaVehicle):
                                     if vehicle.capabilities is not None and vehicle.capabilities.enabled \
                                             and vehicle.capabilities.has_capability('PARKING_POSITION'):

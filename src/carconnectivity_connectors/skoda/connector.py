@@ -24,7 +24,7 @@ from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive, DieselDrive
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute, \
-    CurrentAttribute
+    CurrentAttribute, DateAttribute
 from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
@@ -96,6 +96,8 @@ class Connector(BaseConnector):
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
         self.interval.minimum = timedelta(seconds=180)
         self.interval._is_changeable = True  # pylint: disable=protected-access
+        self.last_event: DateAttribute = DateAttribute(name="last_event", parent=self, tags={'carconnectivity'},
+                                                       initialization=self.get_initialization('last_event'))
 
         self.commands: Commands = Commands(parent=self)
 

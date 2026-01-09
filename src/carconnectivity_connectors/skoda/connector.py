@@ -13,6 +13,8 @@ import json
 import requests
 
 
+from paho.mqtt.client import time_func
+
 from carconnectivity.garage import Garage
 from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
@@ -202,6 +204,8 @@ class Connector(BaseConnector):
         while not self._stop_event.is_set():
             interval = 300
             try:
+                if time_func() - self._mqtt_client._last_msg_in > 300:  # pylint: disable=protected-access
+                    self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
                 try:
                     if fetch:
                         self.fetch_all()

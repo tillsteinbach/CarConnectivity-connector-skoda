@@ -1319,6 +1319,47 @@ class Connector(BaseConnector):
                                 vehicle.images.images['car_picture'] = ImageAttribute(name="car_picture", parent=vehicle.images,
                                                                                       value=img, tags={'carconnectivity'},
                                                                                       initialization=vehicle.images.get_initialization('car_picture'))
+                            if 'exterior_front' in vehicle.images.images:
+                                vehicle.images.images['exterior_front']._set_value(img)  # pylint: disable=protected-access
+                            else:
+                                vehicle.images.images['exterior_front'] = ImageAttribute(name="exterior_front", parent=vehicle.images,
+                                                                                         value=img, tags={'connector_custom'},
+                                                                                         initialization=vehicle.images.get_initialization('exterior_front'))
+                        elif image['viewType'] == 'UNMODIFIED_EXTERIOR_REAR':
+                            if 'exterior_rear' in vehicle.images.images:
+                                vehicle.images.images['exterior_rear']._set_value(img)  # pylint: disable=protected-access
+                            else:
+                                vehicle.images.images['exterior_rear'] = ImageAttribute(name="exterior_rear", parent=vehicle.images,
+                                                                                        value=img, tags={'connector_custom'},
+                                                                                        initialization=vehicle.images.get_initialization('exterior_rear'))
+                        elif image['viewType'] == 'UNMODIFIED_EXTERIOR_SIDE':
+                            if 'exterior_side' in vehicle.images.images:
+                                vehicle.images.images['exterior_side']._set_value(img)  # pylint: disable=protected-access
+                            else:
+                                vehicle.images.images['exterior_side'] = ImageAttribute(name="exterior_side", parent=vehicle.images,
+                                                                                        value=img, tags={'connector_custom'},
+                                                                                        initialization=vehicle.images.get_initialization('exterior_side'))
+                        elif image['viewType'] == 'UNMODIFIED_INTERIOR_FRONT':
+                            if 'interior_front' in vehicle.images.images:
+                                vehicle.images.images['interior_front']._set_value(img)  # pylint: disable=protected-access
+                            else:
+                                vehicle.images.images['interior_front'] = ImageAttribute(name="interior_front", parent=vehicle.images,
+                                                                                         value=img, tags={'connector_custom'},
+                                                                                         initialization=vehicle.images.get_initialization('interior_front'))
+                        elif image['viewType'] == 'UNMODIFIED_INTERIOR_BOOT':
+                            if 'interior_rear' in vehicle.images.images:
+                                vehicle.images.images['interior_rear']._set_value(img)  # pylint: disable=protected-access
+                            else:
+                                vehicle.images.images['interior_rear'] = ImageAttribute(name="interior_rear", parent=vehicle.images,
+                                                                                        value=img, tags={'connector_custom'},
+                                                                                        initialization=vehicle.images.get_initialization('interior_rear'))
+                        elif image['viewType'] == 'UNMODIFIED_INTERIOR_SIDE':
+                            if 'interior_side' in vehicle.images.images:
+                                vehicle.images.images['interior_side']._set_value(img)  # pylint: disable=protected-access
+                            else:
+                                vehicle.images.images['interior_side'] = ImageAttribute(name="interior_side", parent=vehicle.images,
+                                                                                        value=img, tags={'connector_custom'},
+                                                                                        initialization=vehicle.images.get_initialization('interior_side'))
         return vehicle
 
     def fetch_driving_range(self, vehicle: SkodaVehicle, no_cache: bool = False) -> SkodaVehicle:

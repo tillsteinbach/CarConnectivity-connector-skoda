@@ -440,20 +440,19 @@ class Connector(BaseConnector):
                 rest_timeout: timedelta = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
                 vehicle.last_measurement = last_measurement
                 if rest_timeout.total_seconds() > 0:
-                    LOG.info('Vehicle %s is online', vehicle.vin.value)
-                    vehicle.connection_state._set_value(GenericVehicle.ConnectionState.ONLINE)  # pylint: disable=protected-access
+                    if vehicle.connection_state.value is not None and vehicle.connection_state.value != GenericVehicle.ConnectionState.ONLINE:
+                        LOG.info('Vehicle %s went from %s to online', vehicle.vin.value, vehicle.connection_state.value.value)
+                    vehicle.connection_state._set_value(GenericVehicle.ConnectionState.ONLINE, measured=last_measurement)  # pylint: disable=protected-access
                     if vehicle.online_timeout_timer is not None:
                         vehicle.online_timeout_timer.cancel()
-                    vehicle.online_timeout_timer = threading.Timer(rest_timeout.total_seconds(), self._set_vehicle_offline, args=[vehicle])
+                    # The car goes offline approximatly 2 minutes after the last measurement
+                    offline_time: datetime = last_measurement + timedelta(seconds=120)
+                    vehicle.online_timeout_timer = threading.Timer(rest_timeout.total_seconds(), self._set_vehicle_offline, args=[vehicle, offline_time])
                     vehicle.online_timeout_timer.start()
 
-    def _set_vehicle_offline(self, vehicle: SkodaVehicle) -> None:
+    def _set_vehicle_offline(self, vehicle: SkodaVehicle, offline_time: datetime) -> None:
         with vehicle.online_timeout_timer_lock:
-            last_online_measurement: Optional[datetime] = vehicle.last_measurement
-            # The car goes offline approximatly 2 minutes after the last measurement
-            if last_online_measurement is not None:
-                last_online_measurement += timedelta(seconds=120)
-            vehicle.connection_state._set_value(vehicle.official_connection_state, measured=last_online_measurement)  # pylint: disable=protected-access
+            vehicle.connection_state._set_value(vehicle.official_connection_state, measured=offline_time)  # pylint: disable=protected-access
             vehicle.online_timeout_timer = None
             if vehicle.official_connection_state is not None:
                 LOG.info('Vehicle %s went from online to %s', vehicle.vin.value, vehicle.official_connection_state.value)

@@ -2,9 +2,13 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from datetime import datetime, timedelta
+import time
+
 import os
 
 import flask
+from flask_login import login_required
 
 from carconnectivity_connectors.base.ui.connector_ui import BaseConnectorUI
 
@@ -23,11 +27,21 @@ class ConnectorUI(BaseConnectorUI):
                                                                template_folder=os.path.dirname(__file__) + '/templates')
         super().__init__(connector, blueprint=blueprint)
 
+        @self.blueprint.route('/', methods=['GET'])
+        def root():
+            return flask.redirect(flask.url_for('connectors.'+self.blueprint.name+'.status'))
+
+        @self.blueprint.route('/status', methods=['GET'])
+        @login_required
+        def status():
+            return flask.render_template('skoda/status.html', current_app=flask.current_app, connector=self.connector,
+                                         monotonic_zero=datetime.now()-timedelta(seconds=time.monotonic()))
+
     def get_nav_items(self) -> List[Dict[Literal['text', 'url', 'sublinks', 'divider'], Union[str, List]]]:
         """
         Generates a list of navigation items for the Skoda connector UI.
         """
-        return super().get_nav_items()
+        return super().get_nav_items() + [{"text": "Status", "url": flask.url_for('connectors.'+self.blueprint.name+'.status')}]
 
     def get_title(self) -> str:
         """

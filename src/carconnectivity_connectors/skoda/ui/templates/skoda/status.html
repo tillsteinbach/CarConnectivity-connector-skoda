@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+
+{% block header %}
+  <h1>{% block title %}Skoda Connector Status {% endblock %}</h1>
+{% endblock %}
+
+{% block content %}
+<h2>Connection Status for MQTT connection with Skoda Servers:</h2>
+<table class="table">
+  <tbody>
+    {% if connector._mqtt_client.is_connected() %}
+    <tr class="table-success">
+    {% else %}
+    <tr class="table-danger">
+      {% endif %}
+          <td>Connection</td>
+          <td>{{ connector.connection_state.value.value if connector.connection_state.enabled else "unknown"}}</td>
+      </tr>
+      <tr>
+        <td>Client ID</td>
+        <td>{{ connector._mqtt_client._client_id.decode('utf-8')}}</td>
+      </tr>
+      <tr>
+        <td>TX Queue length</td>
+        <td>{{ connector._mqtt_client._out_messages|length}}</td>
+      </tr>
+      <tr>
+        <td>RX Queue length</td>
+        <td>{{ connector._mqtt_client._in_messages|length}}</td>
+      </tr>
+      <tr>
+        <td>Inflight messages</td>
+        <td>{{ connector._mqtt_client._inflight_messages }}/{{ connector._mqtt_client._max_inflight_messages }}</td>
+      </tr>
+      <tr>
+        <td>Last message received</td>
+        <td>{{ (monotonic_zero + timedelta(seconds=connector._mqtt_client._last_msg_in)).replace(microsecond=0) }}</td>
+      </tr>
+      <tr>
+        <td>Last message transmitted</td>
+        <td>{{ (monotonic_zero + timedelta(seconds=connector._mqtt_client._last_msg_out)).replace(microsecond=0) }}</td>
+      </tr>
+  </tbody>
+</table>
+{% endblock %}

@@ -822,4 +822,4 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             except ValueError:
                 LOG_API.warning('Invalid odometer value received: %s', data['odometer'])
         log_extra_keys(LOG_API, 'data', data,  {'vin', 'userId', 'soc', 'chargedRange', 'timeToFinish', 'state', 'mode', 'chargingType', 'odometer',
-                                                        'odometerTimestamp', 'carCapturedTimestamp'})
+                                                'power', 'targetSoc', 'odometerTimestamp', 'carCapturedTimestamp'})

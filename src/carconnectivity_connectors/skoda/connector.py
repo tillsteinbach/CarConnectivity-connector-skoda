@@ -31,7 +31,6 @@ from carconnectivity.charging import Charging
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
 from carconnectivity.charging_connector import ChargingConnector
-from carconnectivity.commands import Commands
 from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand, HonkAndFlashCommand, LockUnlockCommand, WakeSleepCommand, \
     WindowHeatingStartStopCommand
 from carconnectivity.enums import ConnectionState
@@ -100,8 +99,6 @@ class Connector(BaseConnector):
         self.interval._is_changeable = True  # pylint: disable=protected-access
         self.last_event: DateAttribute = DateAttribute(name="last_event", parent=self, tags={'carconnectivity'},
                                                        initialization=self.get_initialization('last_event'))
-
-        self.commands: Commands = Commands(parent=self)
 
         self.user_id: Optional[str] = None
 

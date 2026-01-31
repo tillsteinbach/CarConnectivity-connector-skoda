@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.12] - 2026-01-31
+### Added
+- Added support for fetching charging station information based on latitude and longitude
+
 ## [0.11.8] - 2026-01-23
 ### Fixed
 - Improves handling of token refresh (thanks to user @mikrohard)
@@ -158,7 +162,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.11.8...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.12...HEAD
+[0.12]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12
 [0.11.8]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.8
 [0.11.7]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.7
 [0.11.6]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.6

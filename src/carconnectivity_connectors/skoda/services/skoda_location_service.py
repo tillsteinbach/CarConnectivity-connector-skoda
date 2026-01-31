@@ -120,6 +120,15 @@ class SkodaLocationService(LocationService):  # pylint: disable=too-few-public-m
                         except requests.exceptions.JSONDecodeError as json_error:
                             self.log.error(f"Error decoding JSON response from Skoda API for charging station details: {json_error}")
                         return charging_station
+        except requests.exceptions.ConnectionError as connection_error:
+            self.log.error(f'Connection error: {connection_error}.'
+                           ' If this happens frequently, please check if other applications communicate with the Skoda server.')
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            self.log.error(f'Error: {chunked_encoding_error}')
+        except requests.exceptions.ReadTimeout as timeout_error:
+            self.log.error(f'Timeout during read: {timeout_error}')
+        except requests.exceptions.RetryError as retry_error:
+            self.log.error(f'Retrying failed: {retry_error}')
         except requests.exceptions.JSONDecodeError as json_error:
             self.log.error(f"Error decoding JSON response from Skoda API: {json_error}")
             return None
@@ -175,6 +184,15 @@ class SkodaLocationService(LocationService):  # pylint: disable=too-few-public-m
 
                         location.raw._set_value(value=json.dumps(closest_place))  # pylint: disable=protected-access
                         return location
+        except requests.exceptions.ConnectionError as connection_error:
+            self.log.error(f'Connection error: {connection_error}.'
+                           ' If this happens frequently, please check if other applications communicate with the Skoda server.')
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            self.log.error(f'Error: {chunked_encoding_error}')
+        except requests.exceptions.ReadTimeout as timeout_error:
+            self.log.error(f'Timeout during read: {timeout_error}')
+        except requests.exceptions.RetryError as retry_error:
+            self.log.error(f'Retrying failed: {retry_error}')
         except requests.exceptions.JSONDecodeError as json_error:
             self.log.error(f"Error decoding JSON response from Skoda API: {json_error}")
             return None

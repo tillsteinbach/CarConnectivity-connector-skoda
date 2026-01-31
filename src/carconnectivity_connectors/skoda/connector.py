@@ -48,6 +48,7 @@ from carconnectivity_connectors.skoda.error import Error
 from carconnectivity_connectors.skoda._version import __version__
 from carconnectivity_connectors.skoda.mqtt_client import SkodaMQTTClient
 from carconnectivity_connectors.skoda.command_impl import SpinCommand
+from carconnectivity_connectors.skoda.services.skoda_location_service import SkodaLocationService
 
 SUPPORT_IMAGES = False
 SUPPORT_IMAGES_STR: str = ""
@@ -175,6 +176,10 @@ class Connector(BaseConnector):
         self.session.refresh()
 
         self._elapsed: List[timedelta] = []
+
+        self.location_service: SkodaLocationService = SkodaLocationService("skoda_location_service", car_connectivity, LOG, self)
+        for service_type, priority in self.location_service.get_types():
+            self.car_connectivity.add_service_for(service_type, self.location_service, priority)
 
     def startup(self) -> None:
         self._stop_event.clear()

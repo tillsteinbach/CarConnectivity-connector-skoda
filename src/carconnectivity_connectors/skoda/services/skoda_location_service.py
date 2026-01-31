@@ -1,4 +1,4 @@
-"""Module containing the OpenStreetMap location service."""
+"""Module containing the Skoda location service."""
 # pylint: disable=duplicate-code
 from __future__ import annotations
 from typing import TYPE_CHECKING, Dict
@@ -111,7 +111,6 @@ class SkodaLocationService(LocationService):  # pylint: disable=too-few-public-m
                             if 'maxElectricPowerInKw' in charging_info:
                                 charging_station.max_power._set_value(charging_info['maxElectricPowerInKw'])  # pylint: disable=protected-access
                         detail_url = f"https://mysmob.api.connect.skoda-auto.cz/api/v3/maps/places/{closest_place['id']}?type=CHARGING_STATION"
-                        print(detail_url)
                         detail_response: requests.Response = self.connector.session.get(detail_url, allow_redirects=False)
                         try:
                             detail_data = detail_response.json()

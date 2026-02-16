@@ -949,13 +949,12 @@ class Connector(BaseConnector):
                         LOG_API.info('Unknown temperature unit for targetTemperature in air-conditioning %s', data['targetTemperature']['unitInCar'])
                 if 'temperatureValue' in data['targetTemperature'] and data['targetTemperature']['temperatureValue'] is not None:
                     # pylint: disable-next=protected-access
-                    vehicle.climatization.settings.target_temperature._set_value(value=data['targetTemperature']['temperatureValue'],
-                                                                                 measured=captured_at,
-                                                                                 unit=unit)
                     vehicle.climatization.settings.target_temperature.precision = precision
                     vehicle.climatization.settings.target_temperature.minimum = min_temperature
                     vehicle.climatization.settings.target_temperature.maximum = max_temperature
-
+                    vehicle.climatization.settings.target_temperature._set_value(value=data['targetTemperature']['temperatureValue'],
+                                                                                 measured=captured_at,
+                                                                                 unit=unit)
                 else:
                     # pylint: disable-next=protected-access
                     vehicle.climatization.settings.target_temperature._set_value(value=None, measured=captured_at, unit=unit)

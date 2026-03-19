@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 - No unreleased changes so far
 
 ## [0.12.1] - 2026-03-19
-#### Fixed
+### Fixed
 - Fix MQTT connection error 135 Not authorized (thanks to user @Giermann)
 
 ## [0.12] - 2026-01-31

@@ -106,8 +106,11 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             except TemporaryAuthenticationError as exc:
                 LOG.error('Token refresh failed due to temporary MySkoda error: %s', exc)
         if not self._skoda_connector.session.expired and self._skoda_connector.session.access_token is not None:
-            # pylint: disable-next=attribute-defined-outside-init # this is a false positive, password has a setter in super class
-            self._password = self._skoda_connector.session.access_token  # This is a bit hacky but if password attribute is used here there is an Exception
+            # to connect the user_id must be known and set as username (fallback 'android-app' causes error 135)
+            if self._skoda_connector.user_id is None:
+                self._skoda_connector.fetch_user()
+            self.username_pw_set(username=self._skoda_connector.user_id or 'android-app',
+                                 password=self._skoda_connector.session.access_token)
 
     def _on_carconnectivity_vehicle_enabled(self, element: GenericAttribute, flags: Observable.ObserverEvent) -> None:
         """

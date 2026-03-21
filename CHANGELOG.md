@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.12.3] - 2026-03-21
+### Added
+- Add charging-completed mqtt event to update charging state when charging is completed.
+
 ## [0.12.2] - 2026-03-21
 ### Added
 - Add CHARGING_INTERRUPTED charging state.
@@ -170,7 +174,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.12.2...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.12.3...HEAD
+[0.12.3]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.3
 [0.12.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.2
 [0.12.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.1
 [0.12]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12

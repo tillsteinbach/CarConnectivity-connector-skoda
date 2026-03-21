@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.12.2] - 2026-03-21
+### Added
+- Add CHARGING_INTERRUPTED charging state.
+
 ## [0.12.1] - 2026-03-19
 ### Fixed
 - Fix MQTT connection error 135 Not authorized (thanks to user @Giermann)
@@ -166,7 +170,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.12.1...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.12.2...HEAD
+[0.12.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.2
 [0.12.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.1
 [0.12]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12
 [0.11.8]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.11.8

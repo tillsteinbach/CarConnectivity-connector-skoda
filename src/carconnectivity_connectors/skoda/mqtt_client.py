@@ -618,7 +618,11 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                         if isinstance(vehicle, SkodaElectricVehicle):
                             self.__parse_charging_message_data(vehicle=vehicle, data=data['data'], measured_at=measured_at)
                             self._skoda_connector.car_connectivity.transaction_end()
-
+                    elif 'name' in data and data['name'] == 'charging-completed':
+                        vehicle: Optional[GenericVehicle] = self._skoda_connector.car_connectivity.garage.get_vehicle(vin)
+                        if isinstance(vehicle, SkodaElectricVehicle):
+                            self.__parse_charging_message_data(vehicle=vehicle, data=data['data'], measured_at=measured_at)
+                            self._skoda_connector.car_connectivity.transaction_end()
                     else:
                         LOG_API.info('Received unknown event name %s service event %s for vehicle %s from user %s: %s', data['name'],
                                      service_event, vin, user_id, msg.payload)

@@ -101,7 +101,7 @@ class SkodaCombustionVehicle(CombustionVehicle, SkodaVehicle):
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector, initialization=initialization)
 
 
-class SkodaHybridVehicle(HybridVehicle, SkodaVehicle):
+class SkodaHybridVehicle(HybridVehicle, SkodaElectricVehicle, SkodaCombustionVehicle):
     """
     Represents a Skoda hybrid vehicle.
     """
@@ -109,10 +109,5 @@ class SkodaHybridVehicle(HybridVehicle, SkodaVehicle):
                  origin: Optional[SkodaVehicle] = None, initialization: Optional[Dict] = None) -> None:
         if origin is not None:
             super().__init__(garage=garage, origin=origin, initialization=initialization)
-            if isinstance(origin, ElectricVehicle):
-                self.charging: Charging = SkodaCharging(vehicle=self, origin=origin.charging)
-            else:
-                self.charging: Charging = SkodaCharging(vehicle=self, origin=self.charging)
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector, initialization=initialization)
-            self.charging: Charging = SkodaCharging(vehicle=self, origin=self.charging, initialization=self.get_initialization('charging'))

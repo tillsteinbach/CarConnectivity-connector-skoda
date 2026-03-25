@@ -411,7 +411,7 @@ class Connector(BaseConnector):
                         vehicle_to_update = self.fetch_connection_status(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('PARKING_POSITION', check_status_ok=True):
                         vehicle_to_update = self.fetch_position(vehicle_to_update)
-                    if vehicle_to_update.capabilities.has_capability('CHARGING', check_status_ok=True) and isinstance(vehicle_to_update, (SkodaElectricVehicle, SkodaHybridVehicle)):
+                    if vehicle_to_update.capabilities.has_capability('CHARGING', check_status_ok=True) and isinstance(vehicle_to_update, SkodaElectricVehicle):
                         vehicle_to_update = self.fetch_charging(vehicle_to_update)
                     if vehicle_to_update.capabilities.has_capability('AIR_CONDITIONING', check_status_ok=True):
                         vehicle_to_update = self.fetch_air_conditioning(vehicle_to_update)
@@ -468,12 +468,12 @@ class Connector(BaseConnector):
             if vehicle.official_connection_state is not None:
                 LOG.info('Vehicle %s went from online to %s', vehicle.vin.value, vehicle.official_connection_state.value)
 
-    def fetch_charging(self, vehicle: Union[SkodaElectricVehicle, SkodaHybridVehicle], no_cache: bool = False) -> Union[SkodaElectricVehicle, SkodaHybridVehicle]:
+    def fetch_charging(self, vehicle: SkodaElectricVehicle, no_cache: bool = False) -> SkodaElectricVehicle:
         """
-        Fetches the charging information for a given Skoda electric or hybrid vehicle.
+        Fetches the charging information for a given Skoda electric vehicle.
 
         Args:
-            vehicle (Union[SkodaElectricVehicle, SkodaHybridVehicle]): The Skoda electric or hybrid vehicle object.
+            vehicle (SkodaElectricVehicle): The Skoda electric vehicle object.
 
         Raises:
             APIError: If the VIN is missing or if the carCapturedTimestamp is missing in the response data.
@@ -1058,7 +1058,7 @@ class Connector(BaseConnector):
                 if vehicle.climatization is not None and vehicle.climatization.settings is not None:
                     # pylint: disable-next=protected-access
                     vehicle.climatization.settings.seat_heating._set_value(None, measured=captured_at)
-            if isinstance(vehicle, (SkodaElectricVehicle, SkodaHybridVehicle)):
+            if isinstance(vehicle, SkodaElectricVehicle):
                 if 'chargerConnectionState' in data and data['chargerConnectionState'] is not None \
                         and vehicle.charging is not None and vehicle.charging.connector is not None:
                     if data['chargerConnectionState'] in [item.name for item in ChargingConnector.ChargingConnectorConnectionState]:

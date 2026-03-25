@@ -101,7 +101,7 @@ class SkodaCombustionVehicle(CombustionVehicle, SkodaVehicle):
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector, initialization=initialization)
 
 
-class SkodaHybridVehicle(HybridVehicle, SkodaVehicle):
+class SkodaHybridVehicle(HybridVehicle, SkodaElectricVehicle, SkodaCombustionVehicle):
     """
     Represents a Skoda hybrid vehicle.
     """

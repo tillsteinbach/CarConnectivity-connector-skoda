@@ -50,4 +50,5 @@ class Error(GenericObject):
         that correspond to different climatization issues.
         """
         UNAVAILABLE_CHARGING_INFORMATION = 'UNAVAILABLE_CHARGING_INFORMATION'
+        UNAVAILABLE_VEHICLE_INFORMATION = 'UNAVAILABLE_VEHICLE_INFORMATION'
         UNKNOWN = 'UNKNOWN'

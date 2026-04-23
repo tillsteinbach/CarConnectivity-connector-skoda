@@ -3,7 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
-- No unreleased changes so far
+### Fixed
+- Fix MQTT authentication by upgrading to MQTTv5 and adding TOTP-based authentication using a Firebase Cloud Messaging (FCM) token
 
 ## [0.12.4] - 2026-03-25
 ### Fixed

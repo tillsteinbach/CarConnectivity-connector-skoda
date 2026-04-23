@@ -11,7 +11,6 @@ import threading
 import hashlib
 import hmac
 import struct
-import time
 import asyncio
 from datetime import timedelta, timezone, datetime
 
@@ -112,7 +111,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
     def _generate_totp(fcm_token: str) -> str:
         """Generate a Time-Based One-Time Password (TOTP) derived from an FCM token."""
         key: bytes = hashlib.sha256(fcm_token.encode('utf-8')).digest()
-        time_step: bytes = struct.pack('>Q', int(time.time()) // 30)
+        time_step: bytes = struct.pack('>Q', int(datetime.now(timezone.utc).timestamp()) // 30)
         mac: bytes = hmac.new(key, time_step, hashlib.sha256).digest()
         offset: int = mac[-1] & 0x0F
         code: int = (

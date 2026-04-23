@@ -15,6 +15,7 @@ import asyncio
 from datetime import timedelta, timezone, datetime
 
 import aiohttp
+import requests
 from firebase_messaging import FcmPushClient, FcmRegisterConfig
 
 from paho.mqtt.client import Client
@@ -55,36 +56,12 @@ FIREBASE_SENDER_ID: str = "678067506455"
 FIREBASE_ANDROID_PACKAGE: str = "cz.skodaauto.myskoda"
 FIREBASE_ANDROID_CERT: str = "E567A2E2E6C5E889CDB37EF07EBEC1576C196325"
 MQTT_USERNAME: str = "2940a48-3881-43c2-be46-c4cf53e7fc7b"
+MYSKODA_APP_VERSION: str = "8.11.0"
+NOTIFICATIONS_SUBSCRIPTIONS_URL: str = "https://mysmob.api.connect.skoda-auto.cz/api/v1/notifications-subscriptions/"
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
 LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda-api-debug")
-
-
-class _FirebaseInstallationSession(aiohttp.ClientSession):
-    """aiohttp.ClientSession that adds X-Android-* headers for Firebase installation and registration requests.
-
-    The GCM checkin/register endpoints (android.clients.google.com) must NOT receive these
-    Android app headers — only the Firebase Installations API and FCM Registrations API need them
-    to identify the app.
-    """
-
-    _ANDROID_HEADER_HOSTS: tuple[str, ...] = ("firebaseinstallations.googleapis.com", "fcmregistrations.googleapis.com")
-
-    def __init__(self, android_package: str, android_cert: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._android_headers: Dict[str, str] = {
-            "X-Android-Package": android_package,
-            "X-Android-Cert": android_cert,
-        }
-
-    async def _request(self, method: str, str_or_url: Any, **kwargs: Any) -> Any:  # type: ignore[override]
-        url_str: str = str(str_or_url)
-        if any(host in url_str for host in self._ANDROID_HEADER_HOSTS):
-            headers: Dict[str, str] = dict(kwargs.get("headers") or {})
-            headers.update(self._android_headers)
-            kwargs["headers"] = headers
-        return await super()._request(method, str_or_url, **kwargs)
 
 
 class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
@@ -125,6 +102,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         try:
             self._fcm_token = self._get_fcm_token()
             LOG.debug('Successfully obtained FCM token for MQTT authentication')
+            self._register_fcm_token_with_skoda(self._fcm_token)
         except Exception as exc:  # pylint: disable=broad-except
             LOG.error('Could not obtain FCM token for MQTT authentication: %s', exc)
             LOG.warning('MQTT connection will likely fail without a valid FCM token; TOTP authentication will be skipped')
@@ -142,9 +120,11 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             FIREBASE_APP_ID,
             FIREBASE_API_KEY,
             FIREBASE_SENDER_ID,
-            bundle_id=FIREBASE_ANDROID_PACKAGE,
         )
-        async with _FirebaseInstallationSession(FIREBASE_ANDROID_PACKAGE, FIREBASE_ANDROID_CERT) as firebase_session:
+        async with aiohttp.ClientSession(headers={
+            "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
+            "X-Android-Cert": FIREBASE_ANDROID_CERT,
+        }) as firebase_session:
             client: FcmPushClient = FcmPushClient(
                 callback=self._ignore_push_message,
                 fcm_config=fcm_config,
@@ -155,6 +135,36 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
     def _get_fcm_token(self) -> str:
         """Get an FCM token from Firebase."""
         return asyncio.run(self._async_get_fcm_token())
+
+    def _register_fcm_token_with_skoda(self, fcm_token: str) -> None:
+        """Register the FCM token with Skoda's notifications API.
+
+        This is required so the MQTT broker can authenticate the client via TOTP
+        derived from the same FCM token.
+
+        This method is called from _prefetch_fcm_token which runs in a daemon thread,
+        so using the synchronous requests-based session is safe here.
+
+        Args:
+            fcm_token: The FCM token to register.
+        """
+        url: str = f'{NOTIFICATIONS_SUBSCRIPTIONS_URL}{fcm_token}'
+        try:
+            response: requests.Response = self._skoda_connector.session.put(
+                url,
+                json={
+                    "devicePlatform": "ANDROID",
+                    "appVersion": MYSKODA_APP_VERSION,
+                    "language": "en",
+                },
+                allow_redirects=True,
+            )
+            if response.status_code in (200, 201):
+                LOG.debug('FCM token registered with Skoda notifications API (HTTP %s)', response.status_code)
+            else:
+                LOG.warning('FCM token registration with Skoda returned unexpected status %s', response.status_code)
+        except Exception as exc:  # pylint: disable=broad-except
+            LOG.warning('Could not register FCM token with Skoda notifications API: %s', exc)
 
     @staticmethod
     def _generate_totp(fcm_token: str) -> str:

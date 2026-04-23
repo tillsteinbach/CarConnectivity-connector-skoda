@@ -14,6 +14,7 @@ import struct
 import asyncio
 from datetime import timedelta, timezone, datetime
 
+import aiohttp
 from firebase_messaging import FcmPushClient, FcmRegisterConfig
 
 from paho.mqtt.client import Client
@@ -51,6 +52,8 @@ FIREBASE_PROJECT_ID: str = "678067506455"
 FIREBASE_APP_ID: str = "1:678067506455:android:4afca86c91d6d4c235bb52"
 FIREBASE_API_KEY: str = "AIzaSyBlJdDfVR6ltRhKpA87F3SmCe2hHqhyEd8"
 FIREBASE_SENDER_ID: str = "678067506455"
+FIREBASE_ANDROID_PACKAGE: str = "cz.skodaauto.myskoda"
+FIREBASE_ANDROID_CERT: str = "E567A2E2E6C5E889CDB37EF07EBEC1576C196325"
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
@@ -97,11 +100,17 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             FIREBASE_API_KEY,
             FIREBASE_SENDER_ID,
         )
-        client: FcmPushClient = FcmPushClient(
-            callback=self._ignore_push_message,
-            fcm_config=fcm_config,
-        )
-        return await client.checkin_or_register()
+        firebase_headers = {
+            "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
+            "X-Android-Cert": FIREBASE_ANDROID_CERT,
+        }
+        async with aiohttp.ClientSession(headers=firebase_headers) as firebase_session:
+            client: FcmPushClient = FcmPushClient(
+                callback=self._ignore_push_message,
+                fcm_config=fcm_config,
+                http_client_session=firebase_session,
+            )
+            return await client.checkin_or_register()
 
     def _get_fcm_token(self) -> str:
         """Get an FCM token from Firebase."""

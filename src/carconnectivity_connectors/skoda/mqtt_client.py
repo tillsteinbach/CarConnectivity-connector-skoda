@@ -54,6 +54,7 @@ FIREBASE_API_KEY: str = "AIzaSyBlJdDfVR6ltRhKpA87F3SmCe2hHqhyEd8"
 FIREBASE_SENDER_ID: str = "678067506455"
 FIREBASE_ANDROID_PACKAGE: str = "cz.skodaauto.myskoda"
 FIREBASE_ANDROID_CERT: str = "E567A2E2E6C5E889CDB37EF07EBEC1576C196325"
+MQTT_USERNAME: str = "2940a48-3881-43c2-be46-c4cf53e7fc7b"
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
@@ -98,7 +99,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                          reconnect_on_failure=True)
         self._skoda_connector: Connector = skoda_connector
 
-        self.username = 'android-app'
+        self.username = MQTT_USERNAME
 
         self.on_pre_connect = self._on_pre_connect_callback
         self.on_connect = self._on_connect_callback
@@ -227,10 +228,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             except TemporaryAuthenticationError as exc:
                 LOG.error('Token refresh failed due to temporary MySkoda error: %s', exc)
         if not self._skoda_connector.session.expired and self._skoda_connector.session.access_token is not None:
-            # to connect the user_id must be known and set as username (fallback 'android-app' causes error 135)
-            if self._skoda_connector.user_id is None:
-                self._skoda_connector.fetch_user()
-            self.username_pw_set(username=self._skoda_connector.user_id or 'android-app',
+            self.username_pw_set(username=MQTT_USERNAME,
                                  password=self._skoda_connector.session.access_token)
 
     def _on_carconnectivity_vehicle_enabled(self, element: GenericAttribute, flags: Observable.ObserverEvent) -> None:

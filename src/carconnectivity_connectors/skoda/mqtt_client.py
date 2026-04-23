@@ -60,6 +60,30 @@ LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
 LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda-api-debug")
 
 
+class _FirebaseInstallationSession(aiohttp.ClientSession):
+    """aiohttp.ClientSession that adds X-Android-* headers only for Firebase installation requests.
+
+    The GCM checkin/register endpoints (android.clients.google.com) must NOT receive these
+    Android app headers — only the Firebase Installations API needs them to identify the app.
+    """
+
+    _FCM_INSTALLATION_HOST: str = "firebaseinstallations.googleapis.com"
+
+    def __init__(self, android_package: str, android_cert: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._android_headers: Dict[str, str] = {
+            "X-Android-Package": android_package,
+            "X-Android-Cert": android_cert,
+        }
+
+    async def _request(self, method: str, str_or_url: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        if self._FCM_INSTALLATION_HOST in str(str_or_url):
+            headers: Dict[str, str] = dict(kwargs.get("headers") or {})
+            headers.update(self._android_headers)
+            kwargs["headers"] = headers
+        return await super()._request(method, str_or_url, **kwargs)
+
+
 class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
     """
     MQTT client for the myskoda event push service.
@@ -88,6 +112,22 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         self._retry_refresh_login_once = True
         self._fcm_token: Optional[str] = None
 
+        # Start fetching the FCM token in the background so connect() stays fast.
+        self._fcm_token_event: threading.Event = threading.Event()
+        threading.Thread(target=self._prefetch_fcm_token, daemon=True,
+                         name='skoda-fcm-prefetch').start()
+
+    def _prefetch_fcm_token(self) -> None:
+        """Fetch the FCM token in a daemon thread so connect() is not blocked."""
+        try:
+            self._fcm_token = self._get_fcm_token()
+            LOG.debug('Successfully obtained FCM token for MQTT authentication')
+        except Exception as exc:  # pylint: disable=broad-except
+            LOG.error('Could not obtain FCM token for MQTT authentication: %s', exc)
+            LOG.warning('MQTT connection will likely fail without a valid FCM token; TOTP authentication will be skipped')
+        finally:
+            self._fcm_token_event.set()
+
     @staticmethod
     def _ignore_push_message(message: Dict, token: str, context: Any) -> None:
         """Ignore push messages – only the registration token is needed."""
@@ -100,11 +140,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             FIREBASE_API_KEY,
             FIREBASE_SENDER_ID,
         )
-        firebase_headers = {
-            "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
-            "X-Android-Cert": FIREBASE_ANDROID_CERT,
-        }
-        async with aiohttp.ClientSession(headers=firebase_headers) as firebase_session:
+        async with _FirebaseInstallationSession(FIREBASE_ANDROID_PACKAGE, FIREBASE_ANDROID_CERT) as firebase_session:
             client: FcmPushClient = FcmPushClient(
                 callback=self._ignore_push_message,
                 fcm_config=fcm_config,
@@ -135,34 +171,24 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         """
         Connects the MQTT client to the skoda server.
 
+        The FCM token is fetched in a background thread (started during __init__).
+        The TOTP CONNECT properties are applied in _on_pre_connect_callback, which
+        paho calls right before sending the CONNECT packet on every connect/reconnect.
+
         Returns:
             MQTTErrorCode: The result of the connection attempt.
         """
         self._skoda_connector.connection_state._set_value(value=ConnectionState.CONNECTING)  # pylint: disable=protected-access
 
-        if self._fcm_token is None:
-            try:
-                self._fcm_token = self._get_fcm_token()
-                LOG.debug('Successfully obtained FCM token for MQTT authentication')
-            except Exception as exc:  # pylint: disable=broad-except
-                LOG.error('Could not obtain FCM token for MQTT authentication: %s', exc)
-                LOG.warning('MQTT connection will likely fail without a valid FCM token; TOTP authentication will be skipped')
-
-        connect_props: Properties = Properties(PacketTypes.CONNECT)
-        if self._fcm_token is not None:
-            connect_props.UserProperty = [
-                ('auth_method', 'totp_v1'),
-                ('auth_credentials', self._generate_totp(self._fcm_token)),
-            ]
-
         return super().connect(*args, host='mqtt.messagehub.de', port=8883, keepalive=60,
-                               clean_start=True, properties=connect_props, **kwargs)
+                               clean_start=True, **kwargs)
 
     def _on_pre_connect_callback(self, client: Client, userdata: Any) -> None:
         """
         Callback function that is called before the MQTT client connects to the broker.
 
-        Sets the client's password to the access token.
+        Waits for the background FCM-token fetch to complete, then sets fresh TOTP
+        CONNECT properties and updates the access-token password.
 
         Args:
             client: The MQTT client instance (unused).
@@ -173,6 +199,22 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         """
         del client
         del userdata
+
+        # Wait for the background FCM prefetch (with a generous timeout).
+        # This runs inside paho's reconnect() before the CONNECT packet is sent,
+        # so it is safe to block briefly here.
+        if not self._fcm_token_event.wait(timeout=60):
+            LOG.warning('Timed out waiting for FCM token; TOTP authentication will be skipped')
+
+        if self._fcm_token is not None:
+            connect_props: Properties = Properties(PacketTypes.CONNECT)
+            connect_props.UserProperty = [
+                ('auth_method', 'totp_v1'),
+                ('auth_credentials', self._generate_totp(self._fcm_token)),
+            ]
+            # paho reads self._connect_properties in _send_connect(), which runs
+            # immediately after on_pre_connect returns.
+            self._connect_properties = connect_props  # pylint: disable=attribute-defined-outside-init
 
         if self._skoda_connector.session.expired or self._skoda_connector.session.access_token is None:
             try:

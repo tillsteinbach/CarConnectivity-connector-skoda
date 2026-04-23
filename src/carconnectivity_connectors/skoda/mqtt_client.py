@@ -61,13 +61,14 @@ LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda-ap
 
 
 class _FirebaseInstallationSession(aiohttp.ClientSession):
-    """aiohttp.ClientSession that adds X-Android-* headers only for Firebase installation requests.
+    """aiohttp.ClientSession that adds X-Android-* headers for Firebase installation and registration requests.
 
     The GCM checkin/register endpoints (android.clients.google.com) must NOT receive these
-    Android app headers — only the Firebase Installations API needs them to identify the app.
+    Android app headers — only the Firebase Installations API and FCM Registrations API need them
+    to identify the app.
     """
 
-    _FCM_INSTALLATION_HOST: str = "firebaseinstallations.googleapis.com"
+    _ANDROID_HEADER_HOSTS: tuple = ("firebaseinstallations.googleapis.com", "fcmregistrations.googleapis.com")
 
     def __init__(self, android_package: str, android_cert: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -77,7 +78,8 @@ class _FirebaseInstallationSession(aiohttp.ClientSession):
         }
 
     async def _request(self, method: str, str_or_url: Any, **kwargs: Any) -> Any:  # type: ignore[override]
-        if self._FCM_INSTALLATION_HOST in str(str_or_url):
+        url_str: str = str(str_or_url)
+        if any(host in url_str for host in self._ANDROID_HEADER_HOSTS):
             headers: Dict[str, str] = dict(kwargs.get("headers") or {})
             headers.update(self._android_headers)
             kwargs["headers"] = headers

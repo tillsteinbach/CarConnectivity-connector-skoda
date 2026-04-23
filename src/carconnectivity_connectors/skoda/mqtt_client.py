@@ -92,7 +92,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
     """
     def __init__(self, skoda_connector: Connector) -> None:
         super().__init__(callback_api_version=CallbackAPIVersion.VERSION2,
-                         client_id="Id" + str(uuid.uuid4()) + "#" + str(uuid.uuid4()),
+                         client_id=str(uuid.uuid4()) + "#" + str(uuid.uuid4()),
                          transport="tcp",
                          protocol=MQTTProtocolVersion.MQTTv5,
                          reconnect_on_failure=True)
@@ -141,6 +141,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             FIREBASE_APP_ID,
             FIREBASE_API_KEY,
             FIREBASE_SENDER_ID,
+            bundle_id=FIREBASE_ANDROID_PACKAGE,
         )
         async with _FirebaseInstallationSession(FIREBASE_ANDROID_PACKAGE, FIREBASE_ANDROID_CERT) as firebase_session:
             client: FcmPushClient = FcmPushClient(

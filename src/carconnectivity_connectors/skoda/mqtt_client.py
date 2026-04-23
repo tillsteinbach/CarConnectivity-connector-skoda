@@ -68,7 +68,7 @@ class _FirebaseInstallationSession(aiohttp.ClientSession):
     to identify the app.
     """
 
-    _ANDROID_HEADER_HOSTS: tuple = ("firebaseinstallations.googleapis.com", "fcmregistrations.googleapis.com")
+    _ANDROID_HEADER_HOSTS: tuple[str, ...] = ("firebaseinstallations.googleapis.com", "fcmregistrations.googleapis.com")
 
     def __init__(self, android_package: str, android_cert: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)

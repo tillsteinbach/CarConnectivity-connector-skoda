@@ -147,6 +147,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                 LOG.debug('Successfully obtained FCM token for MQTT authentication')
             except Exception as exc:  # pylint: disable=broad-except
                 LOG.error('Could not obtain FCM token for MQTT authentication: %s', exc)
+                LOG.warning('MQTT connection will likely fail without a valid FCM token; TOTP authentication will be skipped')
 
         connect_props: Properties = Properties(PacketTypes.CONNECT)
         if self._fcm_token is not None:

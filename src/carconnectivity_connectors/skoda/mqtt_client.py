@@ -92,6 +92,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
 
         self._retry_refresh_login_once = True
         self._fcm_token: Optional[str] = None
+        self._fcm_token_registered: bool = False
 
         # Start fetching the FCM token in the background so connect() stays fast.
         self._fcm_token_event: threading.Event = threading.Event()
@@ -103,7 +104,6 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         try:
             self._fcm_token = self._get_fcm_token()
             LOG.debug('Successfully obtained FCM token for MQTT authentication')
-            self._register_fcm_token_with_skoda(self._fcm_token)
         except Exception as exc:  # pylint: disable=broad-except
             LOG.error('Could not obtain FCM token for MQTT authentication: %s', exc)
             LOG.warning('MQTT connection will likely fail without a valid FCM token; TOTP authentication will be skipped')
@@ -162,8 +162,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         This is required so the MQTT broker can authenticate the client via TOTP
         derived from the same FCM token.
 
-        This method is called from _prefetch_fcm_token which runs in a daemon thread,
-        so using the synchronous requests-based session is safe here.
+        This method is called from _on_pre_connect_callback, where the session is
+        guaranteed to be fully initialized and authenticated.
 
         Args:
             fcm_token: The FCM token to register.
@@ -250,6 +250,13 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             # paho reads self._connect_properties in _send_connect(), which runs
             # immediately after on_pre_connect returns.
             self._connect_properties = connect_props  # pylint: disable=attribute-defined-outside-init
+
+            # Register the FCM token with Skoda's API so the broker can validate
+            # the TOTP.  This is done here (rather than in the background prefetch
+            # thread) because the session is guaranteed to be ready at this point.
+            if not self._fcm_token_registered:
+                self._register_fcm_token_with_skoda(self._fcm_token)
+                self._fcm_token_registered = True
 
         if self._skoda_connector.session.expired or self._skoda_connector.session.access_token is None:
             try:

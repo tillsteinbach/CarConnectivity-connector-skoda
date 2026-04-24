@@ -58,6 +58,7 @@ FIREBASE_ANDROID_CERT: str = "E567A2E2E6C5E889CDB37EF07EBEC1576C196325"
 MQTT_USERNAME: str = "2940a48-3881-43c2-be46-c4cf53e7fc7b"
 MYSKODA_APP_VERSION: str = "8.11.0"
 NOTIFICATIONS_SUBSCRIPTIONS_URL: str = "https://mysmob.api.connect.skoda-auto.cz/api/v1/notifications-subscriptions/"
+FCM_CREDENTIALS_KEY: str = "CarConnectivity-connector-skoda:fcm_credentials"
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
@@ -114,7 +115,18 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         """Ignore push messages – only the registration token is needed."""
 
     async def _async_get_fcm_token(self) -> str:
-        """Get an FCM token from Firebase asynchronously."""
+        """Get an FCM token from Firebase asynchronously.
+
+        Loads any previously persisted FCM credentials from the tokenstore and
+        passes them to FcmPushClient so it can do a lightweight GCM check-in
+        instead of a full re-registration.  Full registration is only performed
+        on the very first run (or when existing credentials are no longer valid).
+        Google rate-limits full registrations, so avoiding them prevents the
+        PHONE_REGISTRATION_ERROR that occurs when the process restarts too often.
+        """
+        tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
+        existing_credentials: Optional[Dict[str, Any]] = tokenstore.get(FCM_CREDENTIALS_KEY)
+
         fcm_config: FcmRegisterConfig = FcmRegisterConfig(
             FIREBASE_PROJECT_ID,
             FIREBASE_APP_ID,
@@ -128,9 +140,17 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             client: FcmPushClient = FcmPushClient(
                 callback=self._ignore_push_message,
                 fcm_config=fcm_config,
+                credentials=existing_credentials,
+                credentials_updated_callback=self._on_fcm_credentials_updated,
                 http_client_session=firebase_session,
             )
             return await client.checkin_or_register()
+
+    def _on_fcm_credentials_updated(self, credentials: Dict[str, Any]) -> None:
+        """Save updated FCM credentials to the tokenstore so they survive restarts."""
+        tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
+        tokenstore[FCM_CREDENTIALS_KEY] = credentials
+        LOG.debug('FCM credentials updated and saved to tokenstore')
 
     def _get_fcm_token(self) -> str:
         """Get an FCM token from Firebase."""

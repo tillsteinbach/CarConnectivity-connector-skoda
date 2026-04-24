@@ -3,8 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.12.5] - 2026-04-24
 ### Fixed
 - Fix MQTT authentication by upgrading to MQTTv5 and adding TOTP-based authentication using a Firebase Cloud Messaging (FCM) token
+
+### Changed
+- Updated dependencies: carconnectivity>=0.11.9, requests~=2.33.1, pyjwt~=2.12, pylint~=4.0.5, bandit~=1.9.4
 
 ## [0.12.4] - 2026-03-25
 ### Fixed
@@ -179,7 +184,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.12.4...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.12.5...HEAD
+[0.12.5]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.5
 [0.12.4]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.4
 [0.12.3]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.3
 [0.12.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.2

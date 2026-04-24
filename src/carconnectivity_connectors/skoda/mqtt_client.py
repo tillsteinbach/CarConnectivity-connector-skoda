@@ -152,11 +152,12 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         try:
             response: requests.Response = self._skoda_connector.session.put(
                 url,
-                json={
+                data=json.dumps({
                     "devicePlatform": "ANDROID",
                     "appVersion": MYSKODA_APP_VERSION,
                     "language": "en",
-                },
+                }),
+                headers={"content-type": "application/json"},
                 allow_redirects=True,
             )
             if response.status_code in (200, 201):

@@ -8,10 +8,20 @@ import uuid
 import ssl
 import json
 import threading
+import hashlib
+import hmac
+import struct
+import asyncio
 from datetime import timedelta, timezone, datetime
+
+import aiohttp
+import requests
+from firebase_messaging import FcmPushClient, FcmRegisterConfig
 
 from paho.mqtt.client import Client
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion, MQTTErrorCode
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.properties import Properties
 
 from carconnectivity.errors import CarConnectivityError, TemporaryAuthenticationError
 from carconnectivity.observable import Observable
@@ -33,11 +43,21 @@ if TYPE_CHECKING:
 
     from paho.mqtt.client import MQTTMessage, DisconnectFlags, ConnectFlags
     from paho.mqtt.reasoncodes import ReasonCode
-    from paho.mqtt.properties import Properties
 
     from carconnectivity.attributes import GenericAttribute
 
     from carconnectivity_connectors.skoda.connector import Connector
+
+
+FIREBASE_PROJECT_ID: str = "678067506455"
+FIREBASE_APP_ID: str = "1:678067506455:android:4afca86c91d6d4c235bb52"
+FIREBASE_API_KEY: str = "AIzaSyBlJdDfVR6ltRhKpA87F3SmCe2hHqhyEd8"
+FIREBASE_SENDER_ID: str = "678067506455"
+FIREBASE_ANDROID_PACKAGE: str = "cz.skodaauto.myskoda"
+FIREBASE_ANDROID_CERT: str = "E567A2E2E6C5E889CDB37EF07EBEC1576C196325"
+MYSKODA_APP_VERSION: str = "8.11.0"
+NOTIFICATIONS_SUBSCRIPTIONS_URL: str = "https://mysmob.api.connect.skoda-auto.cz/api/v1/notifications-subscriptions/"
+FCM_CREDENTIALS_KEY: str = "CarConnectivity-connector-skoda:fcm_credentials"
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
@@ -50,14 +70,11 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
     """
     def __init__(self, skoda_connector: Connector) -> None:
         super().__init__(callback_api_version=CallbackAPIVersion.VERSION2,
-                         client_id="Id" + str(uuid.uuid4()) + "#" + str(uuid.uuid4()),
+                         client_id=str(uuid.uuid4()) + "#" + str(uuid.uuid4()),
                          transport="tcp",
-                         protocol=MQTTProtocolVersion.MQTTv311,
-                         reconnect_on_failure=True,
-                         clean_session=True)
+                         protocol=MQTTProtocolVersion.MQTTv5,
+                         reconnect_on_failure=True)
         self._skoda_connector: Connector = skoda_connector
-
-        self.username = 'android-app'
 
         self.on_pre_connect = self._on_pre_connect_callback
         self.on_connect = self._on_connect_callback
@@ -71,22 +88,139 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         self.tls_set(cert_reqs=ssl.CERT_NONE)
 
         self._retry_refresh_login_once = True
+        self._fcm_token: Optional[str] = None
+        self._fcm_token_registered: bool = False
+
+        # Start fetching the FCM token in the background so connect() stays fast.
+        self._fcm_token_event: threading.Event = threading.Event()
+        threading.Thread(target=self._prefetch_fcm_token, daemon=True,
+                         name='skoda-fcm-prefetch').start()
+
+    def _prefetch_fcm_token(self) -> None:
+        """Fetch the FCM token in a daemon thread so connect() is not blocked."""
+        try:
+            self._fcm_token = self._get_fcm_token()
+            LOG.debug('Successfully obtained FCM token for MQTT authentication')
+        except Exception as exc:  # pylint: disable=broad-except
+            LOG.error('Could not obtain FCM token for MQTT authentication: %s', exc)
+            LOG.warning('MQTT connection will likely fail without a valid FCM token; TOTP authentication will be skipped')
+        finally:
+            self._fcm_token_event.set()
+
+    @staticmethod
+    def _ignore_push_message(message: Dict, token: str, context: Any) -> None:
+        """Ignore push messages – only the registration token is needed."""
+
+    async def _async_get_fcm_token(self) -> str:
+        """Get an FCM token from Firebase asynchronously.
+
+        Loads any previously persisted FCM credentials from the tokenstore and
+        passes them to FcmPushClient so it can do a lightweight GCM check-in
+        instead of a full re-registration.  Full registration is only performed
+        on the very first run (or when existing credentials are no longer valid).
+        Google rate-limits full registrations, so avoiding them prevents the
+        PHONE_REGISTRATION_ERROR that occurs when the process restarts too often.
+        """
+        tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
+        existing_credentials: Optional[Dict[str, Any]] = tokenstore.get(FCM_CREDENTIALS_KEY)
+
+        fcm_config: FcmRegisterConfig = FcmRegisterConfig(
+            FIREBASE_PROJECT_ID,
+            FIREBASE_APP_ID,
+            FIREBASE_API_KEY,
+            FIREBASE_SENDER_ID,
+        )
+        async with aiohttp.ClientSession(headers={
+            "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
+            "X-Android-Cert": FIREBASE_ANDROID_CERT,
+        }) as firebase_session:
+            client: FcmPushClient = FcmPushClient(
+                callback=self._ignore_push_message,
+                fcm_config=fcm_config,
+                credentials=existing_credentials,
+                credentials_updated_callback=self._on_fcm_credentials_updated,
+                http_client_session=firebase_session,
+            )
+            return await client.checkin_or_register()
+
+    def _on_fcm_credentials_updated(self, credentials: Dict[str, Any]) -> None:
+        """Save updated FCM credentials to the tokenstore so they survive restarts."""
+        tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
+        tokenstore[FCM_CREDENTIALS_KEY] = credentials
+        LOG.debug('FCM credentials updated and saved to tokenstore')
+
+    def _get_fcm_token(self) -> str:
+        """Get an FCM token from Firebase."""
+        return asyncio.run(self._async_get_fcm_token())
+
+    def _register_fcm_token_with_skoda(self, fcm_token: str) -> None:
+        """Register the FCM token with Skoda's notifications API.
+
+        This is required so the MQTT broker can authenticate the client via TOTP
+        derived from the same FCM token.
+
+        This method is called from _on_pre_connect_callback, where the session is
+        guaranteed to be fully initialized and authenticated.
+
+        Args:
+            fcm_token: The FCM token to register.
+        """
+        url: str = f'{NOTIFICATIONS_SUBSCRIPTIONS_URL}{fcm_token}'
+        try:
+            response: requests.Response = self._skoda_connector.session.put(
+                url,
+                data=json.dumps({
+                    "devicePlatform": "ANDROID",
+                    "appVersion": MYSKODA_APP_VERSION,
+                    "language": "en",
+                }),
+                headers={"content-type": "application/json"},
+                allow_redirects=True,
+            )
+            if response.status_code in (200, 201):
+                LOG.debug('FCM token registered with Skoda notifications API (HTTP %s)', response.status_code)
+            else:
+                LOG.warning('FCM token registration with Skoda returned unexpected status %s', response.status_code)
+        except Exception as exc:  # pylint: disable=broad-except
+            LOG.warning('Could not register FCM token with Skoda notifications API: %s', exc)
+
+    @staticmethod
+    def _generate_totp(fcm_token: str) -> str:
+        """Generate a Time-Based One-Time Password (TOTP) derived from an FCM token."""
+        key: bytes = hashlib.sha256(fcm_token.encode('utf-8')).digest()
+        time_step: bytes = struct.pack('>Q', int(datetime.now(timezone.utc).timestamp()) // 30)
+        mac: bytes = hmac.new(key, time_step, hashlib.sha256).digest()
+        offset: int = mac[-1] & 0x0F
+        code: int = (
+            ((mac[offset] & 0x7F) << 24)
+            | ((mac[offset + 1] & 0xFF) << 16)
+            | ((mac[offset + 2] & 0xFF) << 8)
+            | (mac[offset + 3] & 0xFF)
+        )
+        return str(code % (10 ** 6)).zfill(6)
 
     def connect(self, *args, **kwargs) -> MQTTErrorCode:
         """
         Connects the MQTT client to the skoda server.
 
+        The FCM token is fetched in a background thread (started during __init__).
+        The TOTP CONNECT properties are applied in _on_pre_connect_callback, which
+        paho calls right before sending the CONNECT packet on every connect/reconnect.
+
         Returns:
             MQTTErrorCode: The result of the connection attempt.
         """
         self._skoda_connector.connection_state._set_value(value=ConnectionState.CONNECTING)  # pylint: disable=protected-access
-        return super().connect(*args, host='mqtt.messagehub.de', port=8883, keepalive=60, **kwargs)
+
+        return super().connect(*args, host='mqtt.messagehub.de', port=8883, keepalive=60,
+                               clean_start=True, **kwargs)
 
     def _on_pre_connect_callback(self, client: Client, userdata: Any) -> None:
         """
         Callback function that is called before the MQTT client connects to the broker.
 
-        Sets the client's password to the access token.
+        Waits for the background FCM-token fetch to complete, then sets fresh TOTP
+        CONNECT properties and updates the access-token password.
 
         Args:
             client: The MQTT client instance (unused).
@@ -98,6 +232,29 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         del client
         del userdata
 
+        # Wait for the background FCM prefetch (with a generous timeout).
+        # This runs inside paho's reconnect() before the CONNECT packet is sent,
+        # so it is safe to block briefly here.
+        if not self._fcm_token_event.wait(timeout=60):
+            LOG.warning('Timed out waiting for FCM token; TOTP authentication will be skipped')
+
+        if self._fcm_token is not None:
+            connect_props: Properties = Properties(PacketTypes.CONNECT)
+            connect_props.UserProperty = [
+                ('auth_method', 'totp_v1'),
+                ('auth_credentials', self._generate_totp(self._fcm_token)),
+            ]
+            # paho reads self._connect_properties in _send_connect(), which runs
+            # immediately after on_pre_connect returns.
+            self._connect_properties = connect_props  # pylint: disable=attribute-defined-outside-init
+
+            # Register the FCM token with Skoda's API so the broker can validate
+            # the TOTP.  This is done here (rather than in the background prefetch
+            # thread) because the session is guaranteed to be ready at this point.
+            if not self._fcm_token_registered:
+                self._register_fcm_token_with_skoda(self._fcm_token)
+                self._fcm_token_registered = True
+
         if self._skoda_connector.session.expired or self._skoda_connector.session.access_token is None:
             try:
                 self._skoda_connector.session.refresh()
@@ -106,7 +263,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             except TemporaryAuthenticationError as exc:
                 LOG.error('Token refresh failed due to temporary MySkoda error: %s', exc)
         if not self._skoda_connector.session.expired and self._skoda_connector.session.access_token is not None:
-            # to connect the user_id must be known and set as username (fallback 'android-app' causes error 135)
+            # The broker requires the actual user_id as the MQTT username (not a fixed string).
+            # Fetch it now if it hasn't been retrieved yet.
             if self._skoda_connector.user_id is None:
                 self._skoda_connector.fetch_user()
             self.username_pw_set(username=self._skoda_connector.user_id or 'android-app',

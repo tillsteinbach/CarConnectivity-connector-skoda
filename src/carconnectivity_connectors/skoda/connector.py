@@ -86,7 +86,7 @@ class Connector(BaseConnector):
         BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config, log=LOG, api_log=LOG_API, *args,
                                initialization=initialization, **kwargs)
 
-        self._mqtt_client: SkodaMQTTClient = SkodaMQTTClient(skoda_connector=self)
+        self._mqtt_client: Optional[SkodaMQTTClient] = None
 
         self._background_thread: Optional[threading.Thread] = None
         self._background_connect_thread: Optional[threading.Thread] = None
@@ -176,6 +176,10 @@ class Connector(BaseConnector):
         self.session.refresh()
 
         self._elapsed: List[timedelta] = []
+
+        # Instantiate MQTT client only after _manager and session are fully set up,
+        # because the client starts a background thread that accesses _manager immediately.
+        self._mqtt_client = SkodaMQTTClient(skoda_connector=self)
 
         self.location_service: SkodaLocationService = SkodaLocationService("skoda_location_service", car_connectivity, LOG, self)
         for service_type, priority in self.location_service.get_types():

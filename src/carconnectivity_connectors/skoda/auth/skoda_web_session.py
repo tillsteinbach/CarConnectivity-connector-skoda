@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from urllib.parse import parse_qsl, urlparse, urlsplit, urljoin
+from urllib.parse import parse_qs, parse_qsl, urlparse, urlsplit, urljoin
 
 from urllib3.util.retry import Retry
 
@@ -146,6 +146,10 @@ class SkodaWebSession(OpenIDSession):
                     raise AuthenticationError(f'It seems like you need to accept the terms and conditions. '
                                               f'Try to visit the URL "{url}" or log into smartphone app.')
 
+            if 'consent/marketing' in url:
+                url = self._handle_marketing_consent(url)
+                continue
+
             response = self.websession.get(url, allow_redirects=False)
             if response.status_code == requests.codes['internal_server_error']:
                 raise RetrievalError('Temporary server error during login')
@@ -244,6 +248,32 @@ class SkodaWebSession(OpenIDSession):
 
         self.user_id = params['userId']  # pylint: disable=unused-private-member
         return response.headers['Location']
+
+    def _handle_marketing_consent(self, url: str) -> str:
+        """Handle the VW Group marketing consent page.
+
+        The marketing consent endpoint only accepts GET requests. The callback
+        URL embedded in the query string is the continuation of the OAuth flow,
+        so we extract it and follow the redirect chain from there.
+        """
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        callback = qs.get('callback', [None])[0]
+        if callback:
+            LOG.info('Marketing consent detected, following callback URL')
+            response = self.websession.get(callback, allow_redirects=False)
+            if 'Location' in response.headers:
+                return response.headers['Location']
+            if response.status_code == requests.codes['ok']:
+                return callback
+        # Fallback: GET the consent page itself in case it redirects
+        response = self.websession.get(url, allow_redirects=False)
+        if 'Location' in response.headers:
+            return response.headers['Location']
+        raise AuthenticationError(
+            'Could not handle marketing consent page. '
+            f'Try visiting the URL manually: {url}'
+        )
 
     def _handle_consent_form(self, url: str) -> str:
         response = self.websession.get(url, allow_redirects=False)

@@ -448,7 +448,12 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             self._fcm_token_event.set()
 
     async def _async_get_fcm_token(self) -> str:
-        """Get an Android FCM token from Firebase asynchronously."""
+        """Get an Android FCM token from Firebase asynchronously.
+
+        Loads persisted FCM credentials from the tokenstore and reuses them for
+        a lightweight GCM check-in. Legacy web-push credentials are upgraded to
+        Android app credentials before the token is used for MQTT authentication.
+        """
         tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
         existing_credentials: Optional[Dict[str, Any]] = tokenstore.get(FCM_CREDENTIALS_KEY)
         if existing_credentials is not None:
@@ -490,11 +495,19 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         LOG.debug('FCM credentials updated and saved to tokenstore')
 
     def _get_fcm_token(self) -> str:
-        """Get an FCM token from Firebase."""
+        """Get an Android FCM token from Firebase."""
         return asyncio.run(self._async_get_fcm_token())
 
     def _register_fcm_token_with_skoda(self, fcm_token: str) -> None:
-        """Register the FCM token with Skoda's notifications API."""
+        """Register the FCM token with Skoda's notifications API.
+
+        This is required so the MQTT broker can validate the TOTP derived from
+        the same FCM token. The request uses Android app headers to match the
+        MySkoda client registration flow.
+
+        Args:
+            fcm_token: The FCM token to register.
+        """
         url: str = f'{NOTIFICATIONS_SUBSCRIPTIONS_URL}{fcm_token}'
         language, country = self._get_device_locale()
         try:
@@ -546,7 +559,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         Connects the MQTT client to the skoda server.
 
         The FCM token is fetched in a background thread (started during __init__).
-        The TOTP CONNECT properties are applied in _on_pre_connect_callback, which
+        The CONNECT properties are applied in _on_pre_connect_callback, which
         paho calls right before sending the CONNECT packet on every connect/reconnect.
 
         Returns:
@@ -561,8 +574,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         """
         Callback function that is called before the MQTT client connects to the broker.
 
-        Waits for the background FCM-token fetch to complete, then sets fresh TOTP
-        CONNECT properties and updates the access-token password.
+        Waits for the background FCM-token fetch to complete, then sets the MQTT
+        session expiry, fresh TOTP CONNECT properties, and access-token password.
 
         Args:
             client: The MQTT client instance (unused).
@@ -692,7 +705,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                                 'guest-user-nomination',
                                                 'primary-user-nomination'}
                     vehicle_status_events: Set[str] = {'vehicle-connection-status'}
-                    vehicle_event: Set[str] = {'vehicle-connection-status-update'
+                    vehicle_event: Set[str] = {'vehicle-connection-status-update',
                                                'vehicle-ignition-status'}
                     operation_requests: Set[str] = {
                         'air-conditioning/set-air-conditioning-at-unlock',

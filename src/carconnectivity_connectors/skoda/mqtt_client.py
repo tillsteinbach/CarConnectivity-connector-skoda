@@ -69,8 +69,10 @@ MYSKODA_APP_VERSION_CODE: str = "260430001"
 FIREBASE_ANDROID_FCM_CLIENT_VERSION: str = "fcm-25.0.1"
 FIREBASE_ANDROID_SDK_VERSION: str = "a:19.0.1"
 FIREBASE_ANDROID_OS_VERSION: str = "34"
+MQTT_SESSION_EXPIRY_INTERVAL_SECONDS: int = 86400
 NOTIFICATIONS_SUBSCRIPTIONS_URL: str = "https://mysmob.api.connect.skoda-auto.cz/api/v1/notifications-subscriptions/"
 FCM_CREDENTIALS_KEY: str = "CarConnectivity-connector-skoda:fcm_credentials"
+APP_INSTALLATION_ID_KEY: str = "CarConnectivity-connector-skoda:app_installation_id"
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
@@ -388,13 +390,13 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
     MQTT client for the myskoda event push service.
     """
     def __init__(self, skoda_connector: Connector) -> None:
+        self._skoda_connector: Connector = skoda_connector
+        self._app_installation_id: str = self._get_app_installation_id(skoda_connector)
         super().__init__(callback_api_version=CallbackAPIVersion.VERSION2,
-                         client_id=str(uuid.uuid4()) + "#" + str(uuid.uuid4()),
+                         client_id=f"{self._app_installation_id}#{uuid.uuid4()}",
                          transport="tcp",
                          protocol=MQTTProtocolVersion.MQTTv5,
                          reconnect_on_failure=True)
-        self._skoda_connector: Connector = skoda_connector
-        self._app_installation_id: str = str(uuid.uuid4())
 
         self.on_pre_connect = self._on_pre_connect_callback
         self.on_connect = self._on_connect_callback
@@ -415,6 +417,17 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         self._fcm_token_event: threading.Event = threading.Event()
         threading.Thread(target=self._prefetch_fcm_token, daemon=True,
                          name='skoda-fcm-prefetch').start()
+
+    @staticmethod
+    def _get_app_installation_id(skoda_connector: Connector) -> str:
+        """Return a stable app installation id matching the Android MQTT client id format."""
+        tokenstore: Dict[str, Any] = skoda_connector._manager.tokenstore  # pylint: disable=protected-access
+        app_installation_id: Optional[str] = tokenstore.get(APP_INSTALLATION_ID_KEY)
+        if app_installation_id is None:
+            app_installation_id = str(uuid.uuid4())
+            tokenstore[APP_INSTALLATION_ID_KEY] = app_installation_id
+            skoda_connector.car_connectivity.persist()
+        return app_installation_id
 
     @staticmethod
     def _get_device_locale() -> tuple[str, str]:
@@ -567,19 +580,20 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         if not self._fcm_token_event.wait(timeout=60):
             LOG.warning('Timed out waiting for FCM token; TOTP authentication will be skipped')
 
+        connect_props: Properties = Properties(PacketTypes.CONNECT)
+        connect_props.SessionExpiryInterval = MQTT_SESSION_EXPIRY_INTERVAL_SECONDS
+
         if self._fcm_token is not None:
-            connect_props: Properties = Properties(PacketTypes.CONNECT)
             connect_props.UserProperty = [
                 ('auth_method', 'totp_v1'),
                 ('auth_credentials', self._generate_totp(self._fcm_token)),
             ]
-            # paho reads self._connect_properties in _send_connect(), which runs
-            # immediately after on_pre_connect returns.
-            self._connect_properties = connect_props  # pylint: disable=attribute-defined-outside-init
 
             if not self._fcm_token_registered:
                 self._register_fcm_token_with_skoda(self._fcm_token)
                 self._fcm_token_registered = True
+
+        self._connect_properties = connect_props  # pylint: disable=attribute-defined-outside-init
 
         if self._skoda_connector.session.expired or self._skoda_connector.session.access_token is None:
             try:
@@ -840,17 +854,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             LOG.error('Could not connect (%s): Client identifier not valid', reason_code)
         elif reason_code == 134:
             LOG.error('Could not connect (%s): Bad user name or password', reason_code)
-            if self._retry_refresh_login_once is True:
-                self._retry_refresh_login_once = False
-                LOG.info('trying a relogin once to resolve the error')
-                try:
-                    self._skoda_connector.session.login()
-                except TemporaryAuthenticationError as exc:
-                    LOG.error('Login failed due to temporary MySkoda error: %s', exc)
-                except ConnectionError as exc:
-                    LOG.error('Login failed due to connection error: %s', exc)
+            self._refresh_mqtt_access_token_once('bad username or password')
         elif reason_code == 135:
             LOG.error('Could not connect (%s): Not authorized', reason_code)
+            self._refresh_mqtt_access_token_once('not authorized')
         elif reason_code == 136:
             LOG.error('Could not connect (%s): Server unavailable', reason_code)
         elif reason_code == 137:
@@ -877,6 +884,18 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             LOG.error('Could not connect (%s): Connection rate exceeded', reason_code)
         else:
             LOG.error('Could not connect (%s)', reason_code)
+
+    def _refresh_mqtt_access_token_once(self, reason: str) -> None:
+        """Refresh auth once after an MQTT authentication failure."""
+        if self._retry_refresh_login_once is True:
+            self._retry_refresh_login_once = False
+            LOG.info('trying a token refresh once to resolve MQTT %s error', reason)
+            try:
+                self._skoda_connector.session.refresh()
+            except TemporaryAuthenticationError as exc:
+                LOG.error('Token refresh failed due to temporary MySkoda error: %s', exc)
+            except ConnectionError as exc:
+                LOG.error('Token refresh failed due to connection error: %s', exc)
 
     def _on_disconnect_callback(self, client: Client, userdata, flags: DisconnectFlags, reason_code: ReasonCode, properties: Optional[Properties]) -> None:
         """["Client", Any, DisconnectFlags, ReasonCode, Union[Properties, None]

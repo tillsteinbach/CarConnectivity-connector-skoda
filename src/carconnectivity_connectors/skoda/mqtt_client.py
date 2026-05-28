@@ -75,7 +75,7 @@ FCM_CREDENTIALS_KEY: str = "CarConnectivity-connector-skoda:fcm_credentials"
 APP_INSTALLATION_ID_KEY: str = "CarConnectivity-connector-skoda:app_installation_id"
 FCM_FULL_RESET_COOLDOWN_KEY: str = "CarConnectivity-connector-skoda:fcm_full_reset_at"
 FCM_FULL_RESET_COOLDOWN_SECONDS: int = 86400
-MQTT_FCM_PROPAGATION_RECONNECT_DELAY_SECONDS: int = 120
+MQTT_FCM_PROPAGATION_RECONNECT_DELAY_SECONDS: int = 240
 MQTT_AUTH_FAILURE_RECONNECT_DELAY_SECONDS: int = 300
 
 
@@ -499,6 +499,14 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         """
         tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
         existing_credentials: Optional[Dict[str, Any]] = tokenstore.get(FCM_CREDENTIALS_KEY)
+        LOG.debug(
+            'Loading FCM credentials from tokenstore: present=%s, bundle_id=%s, has_gcm=%s, has_fis=%s, has_registration=%s',
+            existing_credentials is not None,
+            existing_credentials.get("config", {}).get("bundle_id") if existing_credentials else None,
+            bool(existing_credentials.get("gcm")) if existing_credentials else False,
+            bool(existing_credentials.get("fcm", {}).get("installation")) if existing_credentials else False,
+            bool(existing_credentials.get("fcm", {}).get("registration")) if existing_credentials else False,
+        )
         if existing_credentials is not None:
             configured_bundle_id: Optional[str] = existing_credentials.get("config", {}).get("bundle_id")
             if configured_bundle_id != FIREBASE_ANDROID_PACKAGE:
@@ -535,7 +543,15 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
         tokenstore[FCM_CREDENTIALS_KEY] = credentials
         self._skoda_connector.car_connectivity.persist()
-        LOG.debug('FCM credentials updated and saved to tokenstore')
+        LOG.debug(
+            'FCM credentials updated and saved to tokenstore: bundle_id=%s, has_gcm=%s, has_fis=%s, '
+            'has_registration=%s, fcm_token_fingerprint=%s',
+            credentials.get("config", {}).get("bundle_id"),
+            bool(credentials.get("gcm")),
+            bool(credentials.get("fcm", {}).get("installation")),
+            bool(credentials.get("fcm", {}).get("registration")),
+            self._fingerprint_secret(credentials.get("fcm", {}).get("registration", {}).get("token")),
+        )
 
     async def _async_refresh_existing_fcm_token(self) -> str:
         """Refresh the Android FCM token using persisted GCM/FIS credentials."""
@@ -590,27 +606,43 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         """
         url: str = f'{NOTIFICATIONS_SUBSCRIPTIONS_URL}{fcm_token}'
         language, country = self._get_device_locale()
+        urllib3_connectionpool_logger = logging.getLogger("urllib3.connectionpool")
+        urllib3_connectionpool_log_level = urllib3_connectionpool_logger.level
+        LOG.debug(
+            'Registering FCM token with Skoda notifications API: token_fingerprint=%s, app_installation_id=%s, '
+            'app_version=%s, app_version_code=%s, language=%s, country=%s',
+            self._fingerprint_secret(fcm_token),
+            self._app_installation_id,
+            MYSKODA_APP_VERSION,
+            MYSKODA_APP_VERSION_CODE,
+            language,
+            country,
+        )
         try:
-            response: requests.Response = self._skoda_connector.session.put(
-                url,
-                data=json.dumps({
-                    "devicePlatform": "ANDROID",
-                    "appVersion": MYSKODA_APP_VERSION,
-                    "language": language,
-                    "deviceStatus": "ACTIVE",
-                }),
-                headers={
-                    "content-type": "application/json",
-                    "X-APP-VERSION-NAME": MYSKODA_APP_VERSION,
-                    "X-APP-VERSION-CODE": MYSKODA_APP_VERSION_CODE,
-                    "X-APP-INSTALLATION-ID": self._app_installation_id,
-                    "X-APP-PLATFORM": "Android",
-                    "X-DEVICE-LANGUAGE": language,
-                    "X-DEVICE-COUNTRY": country,
-                    "User-Agent": f"MySkoda/Android/{MYSKODA_APP_VERSION}/{MYSKODA_APP_VERSION_CODE}",
-                },
-                allow_redirects=True,
-            )
+            urllib3_connectionpool_logger.setLevel(logging.INFO)
+            try:
+                response: requests.Response = self._skoda_connector.session.put(
+                    url,
+                    data=json.dumps({
+                        "devicePlatform": "ANDROID",
+                        "appVersion": MYSKODA_APP_VERSION,
+                        "language": language,
+                        "deviceStatus": "ACTIVE",
+                    }),
+                    headers={
+                        "content-type": "application/json",
+                        "X-APP-VERSION-NAME": MYSKODA_APP_VERSION,
+                        "X-APP-VERSION-CODE": MYSKODA_APP_VERSION_CODE,
+                        "X-APP-INSTALLATION-ID": self._app_installation_id,
+                        "X-APP-PLATFORM": "Android",
+                        "X-DEVICE-LANGUAGE": language,
+                        "X-DEVICE-COUNTRY": country,
+                        "User-Agent": f"MySkoda/Android/{MYSKODA_APP_VERSION}/{MYSKODA_APP_VERSION_CODE}",
+                    },
+                    allow_redirects=True,
+                )
+            finally:
+                urllib3_connectionpool_logger.setLevel(urllib3_connectionpool_log_level)
             if response.status_code in (200, 201):
                 LOG.debug('FCM token registered with Skoda notifications API (HTTP %s)', response.status_code)
                 return True
@@ -631,7 +663,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
     def _generate_totp(fcm_token: str) -> str:
         """Generate a Time-Based One-Time Password (TOTP) derived from an FCM token."""
         key: bytes = hashlib.sha256(fcm_token.encode('utf-8')).digest()
-        time_step: bytes = struct.pack('>Q', int(datetime.now(timezone.utc).timestamp()) // 30)
+        step_number: int = int(datetime.now(timezone.utc).timestamp()) // 30
+        time_step: bytes = struct.pack('>Q', step_number)
         mac: bytes = hmac.new(key, time_step, hashlib.sha256).digest()
         offset: int = mac[-1] & 0x0F
         code: int = (
@@ -640,7 +673,38 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             | ((mac[offset + 2] & 0xFF) << 8)
             | (mac[offset + 3] & 0xFF)
         )
+        LOG.debug(
+            'Generated MQTT TOTP credentials: fcm_token_fingerprint=%s, time_step=%s, hmac=sha256',
+            SkodaMQTTClient._fingerprint_secret(fcm_token),
+            step_number,
+        )
         return str(code % (10 ** 6)).zfill(6)
+
+    @staticmethod
+    def _fingerprint_secret(secret: Optional[str]) -> Optional[str]:
+        """Return a short one-way fingerprint for comparing secret values in logs."""
+        if secret is None:
+            return None
+        return hashlib.sha256(secret.encode('utf-8')).hexdigest()[:12]
+
+    def _log_mqtt_auth_state_before_connect(self, totp_properties_set: bool) -> None:
+        """Log MQTT auth readiness without exposing token or TOTP secrets."""
+        LOG.debug(
+            'MQTT auth state before CONNECT: client_id=%s, user_id_present=%s, session_expired=%s, '
+            'access_token_present=%s, access_token_len=%s, access_token_fingerprint=%s, fcm_token_present=%s, '
+            'fcm_token_registered=%s, fcm_token_fingerprint=%s, totp_properties_set=%s, session_expiry_interval=%s',
+            self._client_id.decode('utf-8') if isinstance(self._client_id, bytes) else self._client_id,
+            self._skoda_connector.user_id is not None,
+            self._skoda_connector.session.expired,
+            self._skoda_connector.session.access_token is not None,
+            len(self._skoda_connector.session.access_token) if self._skoda_connector.session.access_token is not None else None,
+            self._fingerprint_secret(self._skoda_connector.session.access_token),
+            self._fcm_token is not None,
+            self._fcm_token_registered,
+            self._fingerprint_secret(self._fcm_token),
+            totp_properties_set,
+            MQTT_SESSION_EXPIRY_INTERVAL_SECONDS,
+        )
 
     def connect(self, *args, **kwargs) -> MQTTErrorCode:
         """
@@ -707,8 +771,16 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             # Fetch it now if it hasn't been retrieved yet.
             if self._skoda_connector.user_id is None:
                 self._skoda_connector.fetch_user()
+            self._log_mqtt_auth_state_before_connect(totp_properties_set=self._fcm_token is not None)
+            LOG.debug(
+                'Setting MQTT username/password: username_present=%s, password_fingerprint=%s',
+                self._skoda_connector.user_id is not None,
+                self._fingerprint_secret(self._skoda_connector.session.access_token),
+            )
             self.username_pw_set(username=self._skoda_connector.user_id or 'android-app',
                                  password=self._skoda_connector.session.access_token)
+        else:
+            self._log_mqtt_auth_state_before_connect(totp_properties_set=self._fcm_token is not None)
 
     def _on_carconnectivity_vehicle_enabled(self, element: GenericAttribute, flags: Observable.ObserverEvent) -> None:
         """
@@ -1074,6 +1146,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                 LOG.warning('Reset FCM credentials but Skoda notification registration failed')
                 return False
             LOG.info('Reset FCM credentials for MQTT authentication')
+            self.reconnect_delay_set(
+                min_delay=MQTT_FCM_PROPAGATION_RECONNECT_DELAY_SECONDS,
+                max_delay=MQTT_FCM_PROPAGATION_RECONNECT_DELAY_SECONDS,
+            )
         except Exception as exc:  # pylint: disable=broad-except
             LOG.error('Could not reset FCM credentials for MQTT authentication: %s', exc)
             return False

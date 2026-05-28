@@ -14,6 +14,7 @@ import string
 from urllib.parse import parse_qsl, urlparse
 from urllib3.exceptions import NameResolutionError
 
+import jwt
 import requests
 from requests.models import CaseInsensitiveDict
 from requests.exceptions import ReadTimeout, ConnectionError
@@ -32,6 +33,44 @@ if TYPE_CHECKING:
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.auth")
+
+
+def _token_type_from_url(token_url: str) -> str | None:
+    """Extract tokenType from a MySkoda auth endpoint URL for diagnostics."""
+    return dict(parse_qsl(urlparse(token_url).query)).get('tokenType')
+
+
+def _fingerprint_secret(secret: str | None) -> str | None:
+    """Return a short one-way fingerprint for comparing secret values in logs."""
+    if secret is None:
+        return None
+    return hashlib.sha256(secret.encode('utf-8')).hexdigest()[:12]
+
+
+def _log_access_token_diagnostics(token: dict, source: str, token_type: str | None) -> None:
+    """Log non-secret token metadata that helps diagnose MQTT authorization failures."""
+    access_token = token.get('access_token')
+    if not access_token:
+        LOG.debug('No access token returned from %s token request (tokenType=%s)', source, token_type)
+        return
+    try:
+        claims = jwt.decode(access_token, options={"verify_signature": False})
+    except jwt.exceptions.DecodeError:
+        LOG.warning('Could not decode access token from %s token request (tokenType=%s)', source, token_type)
+        return
+    LOG.debug(
+        'Access token diagnostics from %s token request: tokenType=%s, fingerprint=%s, '
+        'aud=%s, iss=%s, exp=%s, iat=%s, scope=%s, scp=%s',
+        source,
+        token_type,
+        _fingerprint_secret(access_token),
+        claims.get('aud'),
+        claims.get('iss'),
+        claims.get('exp'),
+        claims.get('iat'),
+        claims.get('scope'),
+        claims.get('scp'),
+    )
 
 
 class MySkodaSession(SkodaWebSession):
@@ -74,8 +113,9 @@ class MySkodaSession(SkodaWebSession):
             # perform web authentication
             response = self.do_web_auth(authorization_url)
             # fetch tokens from web authentication response
-            self.fetch_tokens('https://mysmob.api.connect.skoda-auto.cz/api/v1/authentication/exchange-authorization-code?tokenType=CONNECT',
-                              authorization_response=response, verifier=verifier)
+            token_url = 'https://mysmob.api.connect.skoda-auto.cz/api/v1/authentication/exchange-authorization-code?tokenType=CONNECT'
+            LOG.debug('Fetching MySkoda tokens via authorization code endpoint with tokenType=%s', _token_type_from_url(token_url))
+            self.fetch_tokens(token_url, authorization_response=response, verifier=verifier)
         except ReadTimeout as exc:
             raise TemporaryAuthenticationError('Login timed out (Read timeout)') from exc
         except ConnectionError as exc:
@@ -85,9 +125,9 @@ class MySkodaSession(SkodaWebSession):
 
     def refresh(self) -> None:
         # refresh tokens from refresh endpoint
-        self.refresh_tokens(
-            'https://mysmob.api.connect.skoda-auto.cz/api/v1/authentication/refresh-token?tokenType=CONNECT',
-        )
+        token_url = 'https://mysmob.api.connect.skoda-auto.cz/api/v1/authentication/refresh-token?tokenType=CONNECT'
+        LOG.debug('Refreshing MySkoda tokens with tokenType=%s', _token_type_from_url(token_url))
+        self.refresh_tokens(token_url)
 
     def fetch_tokens(
         self,
@@ -128,12 +168,15 @@ class MySkodaSession(SkodaWebSession):
             request_headers['content-type'] = 'application/json'
 
             # request tokens from token_url
+            token_type = _token_type_from_url(token_url)
+            LOG.debug('Requesting MySkoda auth-code token exchange: tokenType=%s', token_type)
             token_response = self.post(token_url, headers=request_headers, data=body, allow_redirects=False,
                                             access_type=AccessType.NONE)  # pyright: ignore reportCallIssue
             if token_response.status_code != requests.codes['ok']:
                 raise TemporaryAuthenticationError(f'Token could not be fetched due to temporary MySkoda failure: {token_response.status_code}')
             # parse token from response body (this internally sets self.token)
             token = self.parse_from_body(token_response.text)
+            _log_access_token_diagnostics(token, source='auth-code exchange', token_type=token_type)
             return token
         return None
 
@@ -241,11 +284,14 @@ class MySkodaSession(SkodaWebSession):
 
         try:
             # request tokens from token_url
+            token_type = _token_type_from_url(token_url)
+            LOG.debug('Requesting MySkoda refresh token exchange: tokenType=%s', token_type)
             token_response = self.post(token_url, headers=request_headers, data=body, allow_redirects=False,
                                             access_type=AccessType.NONE)  # pyright: ignore reportCallIssue
             if token_response.status_code == requests.codes['ok']:
                 # parse token from response body (this internally sets self.token)
                 token = self.parse_from_body(token_response.text)
+                _log_access_token_diagnostics(token, source='refresh', token_type=token_type)
                 return token
             elif token_response.status_code == requests.codes['unauthorized']:
                 LOG.info('Refreshing tokens failed: Server requests new authorization, will login now')

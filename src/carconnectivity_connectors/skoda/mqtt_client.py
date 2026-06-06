@@ -687,25 +687,6 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             return None
         return hashlib.sha256(secret.encode('utf-8')).hexdigest()[:12]
 
-    def _log_mqtt_auth_state_before_connect(self, totp_properties_set: bool) -> None:
-        """Log MQTT auth readiness without exposing token or TOTP secrets."""
-        LOG.debug(
-            'MQTT auth state before CONNECT: client_id=%s, user_id_present=%s, session_expired=%s, '
-            'access_token_present=%s, access_token_len=%s, access_token_fingerprint=%s, fcm_token_present=%s, '
-            'fcm_token_registered=%s, fcm_token_fingerprint=%s, totp_properties_set=%s, session_expiry_interval=%s',
-            self._client_id.decode('utf-8') if isinstance(self._client_id, bytes) else self._client_id,
-            self._skoda_connector.user_id is not None,
-            self._skoda_connector.session.expired,
-            self._skoda_connector.session.access_token is not None,
-            len(self._skoda_connector.session.access_token) if self._skoda_connector.session.access_token is not None else None,
-            self._fingerprint_secret(self._skoda_connector.session.access_token),
-            self._fcm_token is not None,
-            self._fcm_token_registered,
-            self._fingerprint_secret(self._fcm_token),
-            totp_properties_set,
-            MQTT_SESSION_EXPIRY_INTERVAL_SECONDS,
-        )
-
     def connect(self, *args, **kwargs) -> MQTTErrorCode:
         """
         Connects the MQTT client to the skoda server.
@@ -771,16 +752,8 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             # Fetch it now if it hasn't been retrieved yet.
             if self._skoda_connector.user_id is None:
                 self._skoda_connector.fetch_user()
-            self._log_mqtt_auth_state_before_connect(totp_properties_set=self._fcm_token is not None)
-            LOG.debug(
-                'Setting MQTT username/password: username_present=%s, password_fingerprint=%s',
-                self._skoda_connector.user_id is not None,
-                self._fingerprint_secret(self._skoda_connector.session.access_token),
-            )
             self.username_pw_set(username=self._skoda_connector.user_id or 'android-app',
                                  password=self._skoda_connector.session.access_token)
-        else:
-            self._log_mqtt_auth_state_before_connect(totp_properties_set=self._fcm_token is not None)
 
     def _on_carconnectivity_vehicle_enabled(self, element: GenericAttribute, flags: Observable.ObserverEvent) -> None:
         """

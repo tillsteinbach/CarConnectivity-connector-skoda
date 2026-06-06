@@ -1339,7 +1339,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             if not self._recover_mqtt_auth_once('bad username or password'):
                 self._throttle_mqtt_auth_reconnects('bad username or password')
         elif reason_code == 135:
-            LOG.error('Could not connect (%s): Not authorized', reason_code)
+            LOG.error('Could not connect (%s): Not authorized (known issue; see README)', reason_code)
             if not self._recover_mqtt_auth_once('not authorized'):
                 self._throttle_mqtt_auth_reconnects('not authorized')
         elif reason_code == 136:
@@ -1465,7 +1465,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         )
         LOG.error(
             'MQTT %s error persists after %d connect-token refresh attempts; '
-            'reconnects are throttled for %d seconds',
+            'reconnects are throttled for %d seconds. See README known issues for MQTT Not authorized recovery guidance',
             reason,
             self._mqtt_auth_refresh_attempts,
             MQTT_AUTH_FAILURE_RECONNECT_DELAY_SECONDS,

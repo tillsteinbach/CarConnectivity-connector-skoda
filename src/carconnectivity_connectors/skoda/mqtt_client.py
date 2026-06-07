@@ -116,6 +116,32 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         finally:
             self._fcm_token_event.set()
 
+    def _force_fcm_refresh(self) -> None:
+        """Force-refresh the FCM token after an authentication failure."""
+        self._fcm_token_event.clear()
+        try:
+            self._fcm_token = self._get_fcm_token()
+            self._fcm_token_registered = False
+            LOG.info('Forced FCM token refresh successful')
+        except Exception as exc:  # pylint: disable=broad-except
+            LOG.error('Forced FCM token refresh failed: %s', exc)
+        finally:
+            self._fcm_token_event.set()
+
+    def _retry_after_auth_failure(self, reason_code: ReasonCode) -> None:
+        """Retry once after broker auth failure by forcing FCM refresh and relogin."""
+        if self._retry_refresh_login_once is not True:
+            return
+        self._retry_refresh_login_once = False
+        LOG.info('Trying forced FCM refresh and relogin once to resolve auth error (%s)', reason_code)
+        self._force_fcm_refresh()
+        try:
+            self._skoda_connector.session.login()
+        except TemporaryAuthenticationError as exc:
+            LOG.error('Login failed due to temporary MySkoda error: %s', exc)
+        except ConnectionError as exc:
+            LOG.error('Login failed due to connection error: %s', exc)
+
     async def _async_get_fcm_token(self) -> str:
         """Get an FCM token from Firebase asynchronously."""
         fcm_config: FcmRegisterConfig = FcmRegisterConfig(
@@ -597,17 +623,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             LOG.error('Could not connect (%s): Client identifier not valid', reason_code)
         elif reason_code == 134:
             LOG.error('Could not connect (%s): Bad user name or password', reason_code)
-            if self._retry_refresh_login_once is True:
-                self._retry_refresh_login_once = False
-                LOG.info('trying a relogin once to resolve the error')
-                try:
-                    self._skoda_connector.session.login()
-                except TemporaryAuthenticationError as exc:
-                    LOG.error('Login failed due to temporary MySkoda error: %s', exc)
-                except ConnectionError as exc:
-                    LOG.error('Login failed due to connection error: %s', exc)
+            self._retry_after_auth_failure(reason_code)
         elif reason_code == 135:
             LOG.error('Could not connect (%s): Not authorized', reason_code)
+            self._retry_after_auth_failure(reason_code)
         elif reason_code == 136:
             LOG.error('Could not connect (%s): Server unavailable', reason_code)
         elif reason_code == 137:

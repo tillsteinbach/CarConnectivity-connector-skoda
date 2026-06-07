@@ -133,7 +133,9 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
             "x-goog-api-key": FIREBASE_API_KEY,
         }
-        async with aiohttp.ClientSession(headers=firebase_headers) as firebase_session:
+        # Keep session-level headers empty so GCM check-in uses the defaults
+        # expected by firebase_messaging; custom headers are only needed for FIS.
+        async with aiohttp.ClientSession() as firebase_session:
             gcm_credentials = await self._get_gcm_credentials(firebase_session, fcm_config)
             installation = await self._install_firebase(firebase_session, firebase_headers)
             return await self._register_android_fcm_token(firebase_session, gcm_credentials, installation)

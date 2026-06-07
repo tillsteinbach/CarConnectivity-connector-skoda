@@ -144,7 +144,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
 
     @staticmethod
     async def _get_gcm_credentials(firebase_session: aiohttp.ClientSession, fcm_config: FcmRegisterConfig) -> Dict[str, Any]:
-        register: FcmRegister = FcmRegister(fcm_config=fcm_config, http_client_session=firebase_session)
+        register: FcmRegister = FcmRegister(config=fcm_config, http_client_session=firebase_session)
         try:
             credentials = await register.gcm_check_in()
         finally:

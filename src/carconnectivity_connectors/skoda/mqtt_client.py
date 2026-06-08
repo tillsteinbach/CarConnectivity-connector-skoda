@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import struct
 import asyncio
+import time
 from datetime import timedelta, timezone, datetime
 
 import aiohttp
@@ -67,7 +68,7 @@ MYSKODA_APP_VERSION: str = "8.12.0"
 MYSKODA_APP_VERSION_CODE: str = "260430001"
 FIREBASE_ANDROID_FCM_CLIENT_VERSION: str = "fcm-25.0.1"
 FIREBASE_ANDROID_SDK_VERSION: str = "a:19.0.1"
-FIREBASE_ANDROID_OS_VERSION: str = "34"
+FIREBASE_ANDROID_OS_VERSION: str = "35"
 FCM_CREDENTIALS_CONFIG_VERSION: int = 2
 MQTT_SESSION_EXPIRY_INTERVAL_SECONDS: int = 10
 MQTT_KEEPALIVE_INTERVAL_SECONDS: int = 5
@@ -82,10 +83,9 @@ LAST_UPLOADED_NOTIFICATION_LANGUAGE_KEY: str = "CarConnectivity-connector-skoda:
 LAST_UPLOADED_NOTIFICATION_USER_ID_KEY: str = "CarConnectivity-connector-skoda:last_uploaded_notification_user_id"
 REGISTERED_AGENT_ID_USER_ID_KEY: str = "CarConnectivity-connector-skoda:registered_agent_id_user_id"
 MQTT_AUTH_FAILURE_RECONNECT_DELAY_SECONDS: int = 300
-MQTT_AUTH_CONNECT_TOKEN_REFRESH_LIMIT: int = 24
-MQTT_AUTH_NOTIFICATION_REREGISTER_AFTER_ATTEMPTS: int = 3
-MQTT_AUTH_NOTIFICATION_REREGISTER_BACKOFF_SECONDS: int = 300
-MQTT_AUTH_RECONNECT_DELAY_SECONDS: int = 15
+MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS: int = 120
+MQTT_AUTH_CONNECT_TOKEN_REFRESH_LIMIT: int = 3
+MQTT_AUTH_RECONNECT_DELAY_SECONDS: int = 120
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
@@ -572,9 +572,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         self.tls_set()
 
         self._retry_refresh_login_once = True
-        self._mqtt_auth_refresh_attempts = 0
-        self._mqtt_auth_notification_reregister_attempted = False
+        self._mqtt_auth_connect_token_refresh_attempts = 0
+        self._mqtt_auth_fcm_refresh_attempts = 0
         self._mqtt_auth_recovery_exhausted = False
+        self._last_mqtt_auth_fcm_refresh_at: Optional[float] = None
         self._fcm_token: Optional[str] = None
         self._fcm_token_registered: bool = False
         self._fcm_token_registration_uploaded: bool = False
@@ -650,7 +651,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         finally:
             self._fcm_token_event.set()
 
-    async def _async_get_fcm_token(self) -> str:
+    async def _async_get_fcm_token(self, force_refresh: bool = False) -> str:
         """Get an Android FCM token from Firebase asynchronously.
 
         Loads persisted FCM credentials from the tokenstore and reuses them for
@@ -723,7 +724,16 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                     if not deleted:
                         existing_credentials.get("fcm", {}).pop("registration", None)
                         existing_credentials.setdefault("config", {})["fcm_delete_requested"] = False
-                credentials = await register.checkin_or_register()
+                has_refreshable_android_credentials = (
+                    existing_credentials is not None
+                    and bool(existing_credentials.get("gcm"))
+                    and bool(existing_credentials.get("fcm", {}).get("installation"))
+                )
+                if force_refresh and has_refreshable_android_credentials:
+                    LOG.info("Refreshing Android FCM registration after MQTT authentication failure")
+                    credentials = await register.refresh_android_registration()
+                else:
+                    credentials = await register.checkin_or_register()
             finally:
                 await register.close()
             token = credentials.get("fcm", {}).get("registration", {}).get("token") if credentials else None
@@ -752,9 +762,9 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             self._fingerprint_secret(credentials.get("fcm", {}).get("registration", {}).get("token")),
         )
 
-    def _get_fcm_token(self) -> str:
+    def _get_fcm_token(self, force_refresh: bool = False) -> str:
         """Get an Android FCM token from Firebase."""
-        return asyncio.run(self._async_get_fcm_token())
+        return asyncio.run(self._async_get_fcm_token(force_refresh=force_refresh))
 
     def _register_fcm_token_with_skoda(self, fcm_token: str, force: bool = False) -> bool:
         """Register the FCM token with Skoda's notifications API.
@@ -1315,9 +1325,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                                                        flag=observer_flags,
                                                                        priority=Observable.ObserverPriority.USER_MID)
             self._retry_refresh_login_once = True
-            self._mqtt_auth_refresh_attempts = 0
-            self._mqtt_auth_notification_reregister_attempted = False
+            self._mqtt_auth_connect_token_refresh_attempts = 0
+            self._mqtt_auth_fcm_refresh_attempts = 0
             self._mqtt_auth_recovery_exhausted = False
+            self._last_mqtt_auth_fcm_refresh_at = None
             self.reconnect_delay_set(min_delay=1, max_delay=120)
             self._subscribe_vehicles()
 
@@ -1372,53 +1383,66 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
     def _recover_mqtt_auth_once(self, reason: str) -> bool:
         """Run staged MQTT auth recovery and return whether a retry should be attempted.
 
-        Keep the local Firebase installation stable. Refresh the CONNECT token
-        first; if the broker still rejects the client, force one notification
-        ACTIVE upload to re-claim the account/device/backend state and then
-        back off before retrying.
+        Refresh the FCM registration inside the MQTT client on broker auth
+        failures, but throttle refreshes because the MySkoda backend can take
+        a while to accept a freshly registered notification token.
         """
-        if self._reregister_notification_after_mqtt_auth_fail_once(reason):
+        if self._refresh_fcm_registration_after_mqtt_auth_fail(reason):
             return True
         return self._refresh_mqtt_access_token_once(reason)
 
-    def _reregister_notification_after_mqtt_auth_fail_once(self, reason: str) -> bool:
-        """Force one ACTIVE notification re-registration after repeated MQTT 135 errors."""
-        if (
-            reason != 'not authorized'
-            or self._mqtt_auth_notification_reregister_attempted
-            or self._mqtt_auth_refresh_attempts < MQTT_AUTH_NOTIFICATION_REREGISTER_AFTER_ATTEMPTS
-            or self._fcm_token is None
-        ):
+    def _refresh_fcm_registration_after_mqtt_auth_fail(self, reason: str) -> bool:
+        """Refresh and re-upload the FCM registration after an MQTT auth failure."""
+        if reason not in ('not authorized', 'bad username or password'):
             return False
 
-        self._mqtt_auth_notification_reregister_attempted = True
+        now = time.monotonic()
+        if self._last_mqtt_auth_fcm_refresh_at is not None:
+            elapsed = now - self._last_mqtt_auth_fcm_refresh_at
+            if elapsed < MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS:
+                wait_seconds = max(1, int(MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS - elapsed))
+                LOG.debug(
+                    'Skipping FCM registration refresh for MQTT %s error; only %.1fs since last refresh '
+                    '(min %ds), retrying in %ds',
+                    reason,
+                    elapsed,
+                    MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS,
+                    wait_seconds,
+                )
+                self.reconnect_delay_set(min_delay=wait_seconds, max_delay=wait_seconds)
+                return True
+
+        self._last_mqtt_auth_fcm_refresh_at = now
+        self._mqtt_auth_fcm_refresh_attempts += 1
         LOG.warning(
-            'MQTT %s error persists after %d CONNECT-token refresh attempts; '
-            'forcing one Skoda agent-id plus notification ACTIVE re-registration and backing off for %d seconds',
+            'Refreshing Android FCM registration after MQTT %s error (attempt %d); retrying in %d seconds',
             reason,
-            self._mqtt_auth_refresh_attempts,
-            MQTT_AUTH_NOTIFICATION_REREGISTER_BACKOFF_SECONDS,
+            self._mqtt_auth_fcm_refresh_attempts,
+            MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS,
         )
         try:
+            self._fcm_token = self._get_fcm_token(force_refresh=True)
+            self._fcm_token_registered = False
+            self._fcm_token_registration_uploaded = False
             self._register_agent_id_once(force=True)
             if not self._register_fcm_token_with_skoda(self._fcm_token, force=True):
-                LOG.warning('Forced Skoda notification ACTIVE re-registration failed during MQTT %s recovery', reason)
+                LOG.warning('Skoda notification ACTIVE registration failed during MQTT %s recovery', reason)
                 return False
             self._fcm_token_registered = True
             try:
                 self._skoda_connector.session.refresh()
                 self._retry_refresh_login_once = False
             except TemporaryAuthenticationError as exc:
-                LOG.error('Token refresh after forced notification re-registration failed due to temporary MySkoda error: %s', exc)
+                LOG.error('Token refresh after FCM registration refresh failed due to temporary MySkoda error: %s', exc)
             except ConnectionError as exc:
-                LOG.error('Token refresh after forced notification re-registration failed due to connection error: %s', exc)
+                LOG.error('Token refresh after FCM registration refresh failed due to connection error: %s', exc)
             self.reconnect_delay_set(
-                min_delay=MQTT_AUTH_NOTIFICATION_REREGISTER_BACKOFF_SECONDS,
-                max_delay=MQTT_AUTH_NOTIFICATION_REREGISTER_BACKOFF_SECONDS,
+                min_delay=MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS,
+                max_delay=MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS,
             )
             return True
         except Exception as exc:  # pylint: disable=broad-except
-            LOG.error('Could not force Skoda notification ACTIVE re-registration during MQTT %s recovery: %s', reason, exc)
+            LOG.error('Could not refresh FCM registration during MQTT %s recovery: %s', reason, exc)
             return False
 
     def _refresh_mqtt_access_token_once(self, reason: str) -> bool:
@@ -1426,13 +1450,13 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         if reason not in ('not authorized', 'bad username or password'):
             return False
         refresh_limit = MQTT_AUTH_CONNECT_TOKEN_REFRESH_LIMIT if reason == 'not authorized' else 3
-        if self._mqtt_auth_refresh_attempts >= refresh_limit:
+        if self._mqtt_auth_connect_token_refresh_attempts >= refresh_limit:
             return False
-        self._mqtt_auth_refresh_attempts += 1
+        self._mqtt_auth_connect_token_refresh_attempts += 1
         self._retry_refresh_login_once = False
         LOG.debug(
             'Trying MQTT connect-token refresh %d/%d to resolve MQTT %s error',
-            self._mqtt_auth_refresh_attempts,
+            self._mqtt_auth_connect_token_refresh_attempts,
             refresh_limit,
             reason,
         )
@@ -1449,7 +1473,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         LOG.debug(
             'MQTT auth reconnect delay set to %d seconds after refresh attempt %d/%d',
             MQTT_AUTH_RECONNECT_DELAY_SECONDS,
-            self._mqtt_auth_refresh_attempts,
+            self._mqtt_auth_connect_token_refresh_attempts,
             refresh_limit,
         )
         return True
@@ -1467,7 +1491,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             'MQTT %s error persists after %d connect-token refresh attempts; '
             'reconnects are throttled for %d seconds. See README known issues for MQTT Not authorized recovery guidance',
             reason,
-            self._mqtt_auth_refresh_attempts,
+            self._mqtt_auth_connect_token_refresh_attempts,
             MQTT_AUTH_FAILURE_RECONNECT_DELAY_SECONDS,
         )
 

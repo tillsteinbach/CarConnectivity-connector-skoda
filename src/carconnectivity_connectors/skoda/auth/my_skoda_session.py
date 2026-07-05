@@ -196,7 +196,6 @@ class MySkodaSession(SkodaWebSession):
         Returns:
             dict: The new tokens.
         """
-        LOG.info('Refreshing tokens')
         if not token_url:
             raise ValueError("No token endpoint set for auto_refresh.")
 
@@ -243,6 +242,7 @@ class MySkodaSession(SkodaWebSession):
             # request tokens from token_url
             token_response = self.post(token_url, headers=request_headers, data=body, allow_redirects=False,
                                             access_type=AccessType.NONE)  # pyright: ignore reportCallIssue
+            LOG.debug('Refreshing tokens: HTTP %s', token_response.status_code)
             if token_response.status_code == requests.codes['ok']:
                 # parse token from response body (this internally sets self.token)
                 token = self.parse_from_body(token_response.text)

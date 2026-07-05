@@ -103,6 +103,8 @@ class Connector(BaseConnector):
                                                        initialization=self.get_initialization('last_event'))
 
         self.user_id: Optional[str] = None
+        self.user_language: Optional[str] = None
+        self.user_country: Optional[str] = None
 
         LOG.info("Loading skoda connector with config %s", config_remove_credentials(config))
 
@@ -161,7 +163,6 @@ class Connector(BaseConnector):
         if 'online_timeout' in config:
             self.active_config['online_timeout'] = config['online_timeout']
         self.online_timeout: timedelta = timedelta(seconds=self.active_config['online_timeout'])
-
         if self.active_config['username'] is None or self.active_config['password'] is None:
             raise AuthenticationError('Username or password not provided')
 
@@ -195,14 +196,13 @@ class Connector(BaseConnector):
         self._background_connect_thread = threading.Thread(target=self._background_connect_loop, daemon=False)
         self._background_connect_thread.name = 'carconnectivity.connectors.skoda-background_connect'
         self._background_connect_thread.start()
-        # Start MQTT thread
-        self._mqtt_client.loop_start()
         self.healthy._set_value(value=True)  # pylint: disable=protected-access
 
     def _background_connect_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
                 self._mqtt_client.connect()
+                self._mqtt_client.loop_start()
                 break
             except ConnectionRefusedError as e:
                 LOG.error('Could not connect to MQTT-Server: %s, will retry in 10 seconds', e)
@@ -337,8 +337,15 @@ class Connector(BaseConnector):
         url = 'https://mysmob.api.connect.skoda-auto.cz/api/v1/users'
         data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
         if data:
-            if 'id' in data and data['id'] is not None:
-                self.user_id = data['id']
+            user_id = data.get('userId') or data.get('id')
+            if user_id is not None:
+                self.user_id = user_id
+            preferred_language = data.get('preferredLanguage')
+            if isinstance(preferred_language, str) and preferred_language:
+                self.user_language = preferred_language[:2].lower()
+            country = data.get('countryOfResidence') or data.get('country')
+            if isinstance(country, str) and country:
+                self.user_country = country[:2].upper()
 
     def fetch_vehicles(self) -> None:
         """

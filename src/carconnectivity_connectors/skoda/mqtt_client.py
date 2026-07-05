@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 import re
 import logging
 import uuid
-import ssl
 import json
 import threading
 import hashlib
@@ -16,7 +15,15 @@ from datetime import timedelta, timezone, datetime
 
 import aiohttp
 import requests
-from firebase_messaging import FcmPushClient, FcmRegisterConfig
+from base64 import urlsafe_b64encode
+from firebase_messaging import FcmRegisterConfig
+from firebase_messaging.fcmregister import FcmRegister
+from firebase_messaging.proto.android_checkin_pb2 import (
+    AndroidCheckinProto,
+    ChromeBuildProto,
+    DEVICE_ANDROID_OS,
+)
+from firebase_messaging.proto.checkin_pb2 import AndroidCheckinRequest
 
 from paho.mqtt.client import Client
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion, MQTTErrorCode
@@ -49,19 +56,493 @@ if TYPE_CHECKING:
     from carconnectivity_connectors.skoda.connector import Connector
 
 
-FIREBASE_PROJECT_ID: str = "678067506455"
+FIREBASE_PROJECT_ID: str = "myskoda-ng"
 FIREBASE_APP_ID: str = "1:678067506455:android:4afca86c91d6d4c235bb52"
 FIREBASE_API_KEY: str = "AIzaSyBlJdDfVR6ltRhKpA87F3SmCe2hHqhyEd8"
 FIREBASE_SENDER_ID: str = "678067506455"
 FIREBASE_ANDROID_PACKAGE: str = "cz.skodaauto.myskoda"
 FIREBASE_ANDROID_CERT: str = "E567A2E2E6C5E889CDB37EF07EBEC1576C196325"
-MYSKODA_APP_VERSION: str = "8.11.0"
+MYSKODA_APP_VERSION: str = "8.13.0"
+MYSKODA_APP_VERSION_CODE: str = "260525002"
+FIREBASE_ANDROID_FCM_CLIENT_VERSION: str = "fcm-25.0.1"
+FIREBASE_ANDROID_SDK_VERSION: str = "a:19.0.1"
+FIREBASE_ANDROID_OS_VERSION: str = "35"
+FCM_CREDENTIALS_CONFIG_VERSION: int = 2
+MQTT_SESSION_EXPIRY_INTERVAL_SECONDS: int = 10
+MQTT_KEEPALIVE_INTERVAL_SECONDS: int = 15
 NOTIFICATIONS_SUBSCRIPTIONS_URL: str = "https://mysmob.api.connect.skoda-auto.cz/api/v1/notifications-subscriptions/"
 FCM_CREDENTIALS_KEY: str = "CarConnectivity-connector-skoda:fcm_credentials"
+FCM_CREDENTIALS_USERNAME_KEY: str = "CarConnectivity-connector-skoda:fcm_credentials_username"
+APP_INSTALLATION_ID_KEY: str = "CarConnectivity-connector-skoda:app_installation_id"
+APP_INSTALLATION_ID_VERSION_KEY: str = "CarConnectivity-connector-skoda:app_installation_id_version"
+APP_INSTALLATION_ID_VERSION: int = 2
+LAST_UPLOADED_NOTIFICATION_TOKEN_KEY: str = "CarConnectivity-connector-skoda:last_uploaded_notification_token"
+LAST_UPLOADED_NOTIFICATION_LANGUAGE_KEY: str = "CarConnectivity-connector-skoda:last_uploaded_notification_language"
+LAST_UPLOADED_NOTIFICATION_USER_ID_KEY: str = "CarConnectivity-connector-skoda:last_uploaded_notification_user_id"
+REGISTERED_AGENT_ID_USER_ID_KEY: str = "CarConnectivity-connector-skoda:registered_agent_id_user_id"
+MQTT_AUTH_FAILURE_RECONNECT_DELAY_SECONDS: int = 300
+MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS: int = 120
+MQTT_AUTH_CONNECT_TOKEN_REFRESH_LIMIT: int = 3
+MQTT_AUTH_RECONNECT_DELAY_SECONDS: int = 120
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.mqtt")
 LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda-api-debug")
+
+
+class SkodaFcmRegister(FcmRegister):
+    """FcmRegister variant that identifies as the MySkoda Android app."""
+
+    def _get_checkin_payload(
+        self, android_id: int | None = None, security_token: int | None = None
+    ) -> AndroidCheckinRequest:
+        """Build a GCM checkin payload that identifies as an Android device."""
+        chrome = ChromeBuildProto()
+        chrome.platform = ChromeBuildProto.Platform.PLATFORM_ANDROID
+        chrome.chrome_version = MYSKODA_APP_VERSION
+        chrome.channel = ChromeBuildProto.Channel.CHANNEL_STABLE
+
+        checkin = AndroidCheckinProto()
+        checkin.type = DEVICE_ANDROID_OS
+        checkin.chrome_build.CopyFrom(chrome)
+
+        payload = AndroidCheckinRequest()
+        payload.user_serial_number = 0
+        payload.checkin.CopyFrom(checkin)
+        payload.version = 3
+        if android_id is not None and security_token is not None:
+            payload.id = int(android_id)
+            payload.security_token = int(security_token)
+        return payload
+
+    async def gcm_register(
+        self,
+        options: dict,
+        retries: int = 2,
+    ) -> dict | None:
+        """Register with GCM using Skoda Android app identity instead of Chrome defaults."""
+        android_id = options["androidId"]
+        security_token = options["securityToken"]
+
+        token = await self._post_gcm_form(
+            headers={
+                "Authorization": f"AidLogin {android_id}:{security_token}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body={
+                "app": FIREBASE_ANDROID_PACKAGE,
+                "X-subtype": FIREBASE_SENDER_ID,
+                "device": android_id,
+                "sender": FIREBASE_SENDER_ID,
+                "X-scope": "*",
+            },
+            label="GCM register",
+            retries=retries,
+        )
+        if token is None:
+            return None
+        return {
+            "token": token,
+            "app_id": FIREBASE_SENDER_ID,
+            "android_id": android_id,
+            "security_token": security_token,
+        }
+
+    async def _post_gcm_form(self, headers: dict[str, Any], body: dict[str, Any], label: str, retries: int) -> str | None:
+        """POST a GCM register form and return its token value."""
+        from urllib.parse import parse_qs  # pylint: disable=import-outside-toplevel
+        from firebase_messaging.const import GCM_REGISTER_URL  # pylint: disable=import-outside-toplevel
+
+        last_error: str | Exception | None = None
+        for try_num in range(retries):
+            try:
+                async with self._session.post(
+                    url=GCM_REGISTER_URL,
+                    headers=headers,
+                    data=body,
+                    timeout=self.CLIENT_TIMEOUT,
+                ) as resp:
+                    response_text = await resp.text()
+                    status = resp.status
+                if status != 200 or "Error" in response_text:
+                    last_error = response_text
+                    LOG.warning("%s attempt %d/%d failed: HTTP %s %s",
+                                label, try_num + 1, retries, status, response_text[:160])
+                else:
+                    token = parse_qs(response_text).get("token", [None])[0]
+                    if token:
+                        return token
+                    last_error = response_text
+                    LOG.warning("%s attempt %d/%d returned no token: %s",
+                                label, try_num + 1, retries, response_text[:160])
+            except Exception as exc:  # pylint: disable=broad-except
+                last_error = exc
+                LOG.warning("%s attempt %d/%d exception: %s", label, try_num + 1, retries, exc)
+            await asyncio.sleep(1)
+
+        LOG.error("%s failed after %d tries: %s", label, retries, last_error)
+        return None
+
+    async def _post_gcm_delete_form(self, headers: dict[str, Any], body: dict[str, Any], label: str, retries: int) -> bool:
+        """POST a GCM delete form and return whether it was accepted."""
+        from firebase_messaging.const import GCM_REGISTER_URL  # pylint: disable=import-outside-toplevel
+
+        last_error: str | Exception | None = None
+        for try_num in range(retries):
+            try:
+                async with self._session.post(
+                    url=GCM_REGISTER_URL,
+                    headers=headers,
+                    data=body,
+                    timeout=self.CLIENT_TIMEOUT,
+                ) as resp:
+                    response_text = await resp.text()
+                    status = resp.status
+                if status == 200 and "Error" not in response_text:
+                    LOG.debug("%s accepted by GCM: %s", label, response_text[:120])
+                    return True
+                last_error = response_text
+                LOG.warning("%s attempt %d/%d failed: HTTP %s %s",
+                            label, try_num + 1, retries, status, response_text[:160])
+            except Exception as exc:  # pylint: disable=broad-except
+                last_error = exc
+                LOG.warning("%s attempt %d/%d exception: %s", label, try_num + 1, retries, exc)
+            await asyncio.sleep(1)
+
+        LOG.error("%s failed after %d tries: %s", label, retries, last_error)
+        return False
+
+    async def _android_fcm_register(
+        self,
+        android_id: int,
+        security_token: int,
+        installation: dict[str, Any],
+        retries: int = 2,
+    ) -> dict[str, Any] | None:
+        """Request an Android FCM token instead of the library's web-push registration."""
+        token = await self._post_gcm_form(
+            headers={
+                "Authorization": f"AidLogin {android_id}:{security_token}",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
+                "X-Android-Cert": FIREBASE_ANDROID_CERT,
+                "x-goog-firebase-installations-auth": installation["token"],
+            },
+            body={
+                "app": FIREBASE_ANDROID_PACKAGE,
+                "appid": installation["fid"],
+                "sender": FIREBASE_SENDER_ID,
+                "subtype": FIREBASE_SENDER_ID,
+                "scope": "*",
+                "X-subtype": FIREBASE_SENDER_ID,
+                "X-scope": "*",
+                "gmp_app_id": FIREBASE_APP_ID,
+                "app_ver": MYSKODA_APP_VERSION_CODE,
+                "app_ver_name": MYSKODA_APP_VERSION,
+                "osv": FIREBASE_ANDROID_OS_VERSION,
+                "cliv": FIREBASE_ANDROID_FCM_CLIENT_VERSION,
+                "Goog-Firebase-Installations-Auth": installation["token"],
+                "device": android_id,
+            },
+            label="Android FCM register",
+            retries=retries,
+        )
+        return {"token": token} if token else None
+
+    async def _android_fcm_delete(
+        self,
+        android_id: int,
+        security_token: int,
+        installation: dict[str, Any],
+        token: str | None,
+        retries: int = 2,
+    ) -> bool:
+        """Delete the Android FCM token using the GCM register delete flow."""
+        body: dict[str, Any] = {
+            "app": FIREBASE_ANDROID_PACKAGE,
+            "appid": installation["fid"],
+            "sender": FIREBASE_SENDER_ID,
+            "subtype": FIREBASE_SENDER_ID,
+            "scope": "*",
+            "X-subtype": FIREBASE_SENDER_ID,
+            "X-scope": "*",
+            "gmp_app_id": FIREBASE_APP_ID,
+            "app_ver": MYSKODA_APP_VERSION_CODE,
+            "app_ver_name": MYSKODA_APP_VERSION,
+            "osv": FIREBASE_ANDROID_OS_VERSION,
+            "cliv": FIREBASE_ANDROID_FCM_CLIENT_VERSION,
+            "Goog-Firebase-Installations-Auth": installation["token"],
+            "device": android_id,
+            "delete": "1",
+        }
+        if token:
+            body["token"] = token
+        return await self._post_gcm_delete_form(
+            headers={
+                "Authorization": f"AidLogin {android_id}:{security_token}",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
+                "X-Android-Cert": FIREBASE_ANDROID_CERT,
+                "x-goog-firebase-installations-auth": installation["token"],
+            },
+            body=body,
+            label="Android FCM delete",
+            retries=retries,
+        )
+
+    async def fcm_refresh_install_token(self) -> dict | None:
+        """Refresh the FIS auth token using Android headers and Android SDK version."""
+        from firebase_messaging.const import FCM_INSTALLATION, AUTH_VERSION  # pylint: disable=import-outside-toplevel
+
+        if not self.credentials:
+            raise RuntimeError("Credentials must be set to refresh install token")
+
+        installation = self.credentials["fcm"]["installation"]
+        hb_header = urlsafe_b64encode(
+            json.dumps({"heartbeats": [], "version": 2}).encode()
+        ).decode()
+        headers = {
+            "Authorization": f"{AUTH_VERSION} {installation['refresh_token']}",
+            "x-firebase-client": hb_header,
+            "x-goog-api-key": self.config.api_key,
+            "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
+            "X-Android-Cert": FIREBASE_ANDROID_CERT,
+            "Cache-Control": "no-cache",
+        }
+        payload = {
+            "installation": {
+                "sdkVersion": FIREBASE_ANDROID_SDK_VERSION,
+                "appId": self.config.app_id,
+            }
+        }
+        url = (
+            FCM_INSTALLATION + f"projects/{self.config.project_id}/"
+            f"installations/{installation['fid']}/authTokens:generate"
+        )
+        async with self._session.post(
+            url=url,
+            headers=headers,
+            json=payload,
+            timeout=self.CLIENT_TIMEOUT,
+        ) as resp:
+            if resp.status == 200:
+                refreshed = await resp.json()
+                return {
+                    "token": refreshed["token"],
+                    "expires_in": int(refreshed["expiresIn"][:-1:]),
+                    "created_at": asyncio.get_running_loop().time(),
+                }
+            text = await resp.text()
+            LOG.error("FIS auth token refresh failed: %s", text)
+            return None
+
+    async def register(self) -> dict:
+        """Register using Android-like GCM/FIS/FCM steps instead of web push."""
+        checkin_data = await self.gcm_check_in()
+        if checkin_data is None:
+            raise RuntimeError(
+                "Unable to establish subscription with Google Cloud Messaging."
+            )
+        gcm_data = {
+            "android_id": checkin_data["androidId"],
+            "security_token": checkin_data["securityToken"],
+        }
+
+        installation = await self.fcm_install()
+        if not installation:
+            raise RuntimeError("Unable to register with Firebase Installations")
+
+        registration = await self._android_fcm_register(
+            android_id=gcm_data["android_id"],
+            security_token=gcm_data["security_token"],
+            installation=installation,
+        )
+        if not registration:
+            raise RuntimeError("Unable to register Android token with FCM")
+
+        res: dict[str, Any] = {
+            "gcm": gcm_data,
+            "fcm": {
+                "registration": registration,
+                "installation": installation,
+            },
+            "config": {
+                "bundle_id": self.config.bundle_id,
+                "project_id": self.config.project_id,
+                "version": FCM_CREDENTIALS_CONFIG_VERSION,
+            },
+        }
+        LOG.info("Registered with Android FCM flow")
+        return res
+
+    def _store_android_registration(self, android_registration: dict[str, Any], installation: dict[str, Any]) -> dict[str, Any]:
+        """Persist refreshed Android FCM registration data in the credential structure."""
+        self.credentials["fcm"] = {
+            "registration": android_registration,
+            "installation": installation,
+        }
+        self.credentials["config"] = {
+            "bundle_id": self.config.bundle_id,
+            "project_id": self.config.project_id,
+            "version": FCM_CREDENTIALS_CONFIG_VERSION,
+        }
+        if self.credentials_updated_callback:
+            self.credentials_updated_callback(self.credentials)
+        return self.credentials
+
+    async def refresh_android_registration(self) -> dict[str, Any]:
+        """Refresh Android FCM registration using the existing GCM and FIS installation credentials."""
+        if not self.credentials:
+            raise RuntimeError("Credentials must be set to refresh Android FCM registration")
+
+        gcm_credentials: dict[str, Any] = self.credentials["gcm"]
+        gcm_data = await self.gcm_check_in(
+            gcm_credentials["android_id"],
+            gcm_credentials["security_token"],
+        )
+        if not gcm_data:
+            raise RuntimeError("Unable to check in existing GCM credentials")
+
+        installation = self.credentials.get("fcm", {}).get("installation")
+        if installation and installation.get("refresh_token") and installation.get("fid"):
+            refreshed_installation = await self.fcm_refresh_install_token()
+            if refreshed_installation:
+                installation = {**installation, **refreshed_installation}
+
+        if not installation or not installation.get("token"):
+            raise RuntimeError("Existing FCM installation cannot be refreshed")
+
+        android_registration = await self._android_fcm_register(
+            android_id=gcm_credentials["android_id"],
+            security_token=gcm_credentials["security_token"],
+            installation=installation,
+        )
+        if not android_registration:
+            raise RuntimeError("Unable to refresh Android token with FCM")
+
+        return self._store_android_registration(android_registration, installation)
+
+    async def delete_android_registration(self) -> bool:
+        """Delete the cached Android FCM registration while keeping GCM/FIS credentials."""
+        if not self.credentials:
+            return False
+
+        registration: dict[str, Any] = self.credentials.get("fcm", {}).get("registration", {})
+        token = registration.get("token")
+        if not token:
+            return False
+
+        gcm_credentials: dict[str, Any] = self.credentials["gcm"]
+        gcm_data = await self.gcm_check_in(
+            gcm_credentials["android_id"],
+            gcm_credentials["security_token"],
+        )
+        if not gcm_data:
+            raise RuntimeError("Unable to check in existing GCM credentials before FCM delete")
+
+        installation = self.credentials.get("fcm", {}).get("installation")
+        if installation and installation.get("refresh_token") and installation.get("fid"):
+            refreshed_installation = await self.fcm_refresh_install_token()
+            if refreshed_installation:
+                installation = {**installation, **refreshed_installation}
+
+        if not installation or not installation.get("token"):
+            raise RuntimeError("Existing FCM installation cannot be refreshed before FCM delete")
+
+        deleted = await self._android_fcm_delete(
+            android_id=gcm_credentials["android_id"],
+            security_token=gcm_credentials["security_token"],
+            installation=installation,
+            token=token,
+        )
+        if deleted:
+            self.credentials.get("fcm", {}).pop("registration", None)
+            self.credentials["fcm"]["installation"] = installation
+            self.credentials.get("config", {}).pop("fcm_delete_requested", None)
+            if self.credentials_updated_callback:
+                self.credentials_updated_callback(self.credentials)
+        return deleted
+
+    async def checkin_or_register(self) -> dict[str, Any]:
+        """Reuse Android credentials, upgrade legacy web credentials, otherwise register."""
+        if self.credentials:
+            gcm_data = await self.gcm_check_in(
+                self.credentials["gcm"]["android_id"],
+                self.credentials["gcm"]["security_token"],
+            )
+            if gcm_data:
+                registration: dict[str, Any] = self.credentials.get("fcm", {}).get("registration", {})
+                if "web" in registration or not registration.get("token"):
+                    LOG.info("Attempting to create Android FCM registration from cached GCM/FIS credentials")
+                    installation = self.credentials.get("fcm", {}).get("installation")
+                    if installation and installation.get("refresh_token") and installation.get("fid"):
+                        refreshed_installation = await self.fcm_refresh_install_token()
+                        if refreshed_installation:
+                            installation = {**installation, **refreshed_installation}
+                    if not installation or not installation.get("token"):
+                        installation = await self.fcm_install()
+                    if installation:
+                        android_registration = await self._android_fcm_register(
+                            android_id=self.credentials["gcm"]["android_id"],
+                            security_token=self.credentials["gcm"]["security_token"],
+                            installation=installation,
+                        )
+                        if android_registration:
+                            return self._store_android_registration(android_registration, installation)
+                    raise RuntimeError("Unable to create Android FCM registration from cached credentials")
+                return self.credentials
+
+        self.credentials = await self.register()
+        if self.credentials_updated_callback:
+            self.credentials_updated_callback(self.credentials)
+        return self.credentials
+
+    async def fcm_install(self) -> dict | None:
+        """Create a Firebase Installation using Android SDK version and explicit Android headers."""
+        import secrets  # pylint: disable=import-outside-toplevel
+        import time  # pylint: disable=import-outside-toplevel
+        from firebase_messaging.const import FCM_INSTALLATION, AUTH_VERSION  # pylint: disable=import-outside-toplevel
+
+        fid = bytearray(secrets.token_bytes(17))
+        fid[0] = 0b01110000 + (fid[0] % 0b00010000)
+        fid64 = urlsafe_b64encode(fid).decode().rstrip("=")
+
+        hb_header = urlsafe_b64encode(
+            json.dumps({"heartbeats": [], "version": 2}).encode()
+        ).decode()
+
+        headers = {
+            "x-firebase-client": hb_header,
+            "x-goog-api-key": self.config.api_key,
+            "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
+            "X-Android-Cert": FIREBASE_ANDROID_CERT,
+            "Cache-Control": "no-cache",
+        }
+        payload = {
+            "appId": self.config.app_id,
+            "authVersion": AUTH_VERSION,
+            "fid": fid64,
+            "sdkVersion": FIREBASE_ANDROID_SDK_VERSION,
+        }
+        url = FCM_INSTALLATION + f"projects/{self.config.project_id}/installations"
+        async with self._session.post(
+            url=url,
+            headers=headers,
+            json=payload,
+            timeout=self.CLIENT_TIMEOUT,
+        ) as resp:
+            if resp.status == 200:
+                fcm_install = await resp.json()
+                return {
+                    "token": fcm_install["authToken"]["token"],
+                    "expires_in": int(fcm_install["authToken"]["expiresIn"][:-1:]),
+                    "refresh_token": fcm_install["refreshToken"],
+                    "fid": fcm_install["fid"],
+                    "created_at": time.monotonic(),
+                }
+            text = await resp.text()
+            LOG.error("FIS install failed: %s", text)
+            return None
 
 
 class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
@@ -69,12 +550,13 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
     MQTT client for the myskoda event push service.
     """
     def __init__(self, skoda_connector: Connector) -> None:
+        self._skoda_connector: Connector = skoda_connector
+        self._app_installation_id: str = self._get_app_installation_id(skoda_connector)
         super().__init__(callback_api_version=CallbackAPIVersion.VERSION2,
-                         client_id=str(uuid.uuid4()) + "#" + str(uuid.uuid4()),
+                         client_id=self._build_mqtt_client_id(),
                          transport="tcp",
                          protocol=MQTTProtocolVersion.MQTTv5,
                          reconnect_on_failure=True)
-        self._skoda_connector: Connector = skoda_connector
 
         self.on_pre_connect = self._on_pre_connect_callback
         self.on_connect = self._on_connect_callback
@@ -85,16 +567,43 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
 
         self.delayed_access_function_timers: Dict[str, threading.Timer] = {}
 
-        self.tls_set(cert_reqs=ssl.CERT_NONE)
+        self.tls_set()
 
         self._retry_refresh_login_once = True
+        self._mqtt_auth_connect_token_refresh_attempts = 0
+        self._mqtt_auth_fcm_refresh_attempts = 0
+        self._mqtt_auth_recovery_exhausted = False
         self._fcm_token: Optional[str] = None
         self._fcm_token_registered: bool = False
+        self._fcm_token_registration_uploaded: bool = False
+        self._refresh_mqtt_token_after_fcm_upload_once: bool = True
+        self._fcm_registration_lock = threading.Lock()
+        self._pre_connect_lock = threading.Lock()
 
         # Start fetching the FCM token in the background so connect() stays fast.
         self._fcm_token_event: threading.Event = threading.Event()
         threading.Thread(target=self._prefetch_fcm_token, daemon=True,
                          name='skoda-fcm-prefetch').start()
+
+    @staticmethod
+    def _get_app_installation_id(skoda_connector: Connector) -> str:
+        """Return a stable app installation id matching the Android MQTT client id format."""
+        tokenstore: Dict[str, Any] = skoda_connector._manager.tokenstore  # pylint: disable=protected-access
+        app_installation_id: Optional[str] = tokenstore.get(APP_INSTALLATION_ID_KEY)
+        if app_installation_id is None:
+            app_installation_id = str(uuid.uuid4())
+            tokenstore[APP_INSTALLATION_ID_KEY] = app_installation_id
+            tokenstore[APP_INSTALLATION_ID_VERSION_KEY] = APP_INSTALLATION_ID_VERSION
+            skoda_connector.car_connectivity.persist()
+        return app_installation_id
+
+    def _build_mqtt_client_id(self) -> str:
+        """Return an Android-style dynamic MQTT client id for one CONNECT attempt."""
+        return f"{self._app_installation_id}#{uuid.uuid4()}"
+
+    def _get_configured_username(self) -> Optional[str]:
+        """Return the configured Skoda account name without exposing it in logs."""
+        return self._skoda_connector.active_config.get('username')
 
     def _prefetch_fcm_token(self) -> None:
         """Fetch the FCM token in a daemon thread so connect() is not blocked."""
@@ -107,88 +616,346 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         finally:
             self._fcm_token_event.set()
 
-    @staticmethod
-    def _ignore_push_message(message: Dict, token: str, context: Any) -> None:
-        """Ignore push messages – only the registration token is needed."""
+    async def _async_get_fcm_token(self, force_refresh: bool = False) -> str:
+        """Get an Android FCM token from Firebase asynchronously.
 
-    async def _async_get_fcm_token(self) -> str:
-        """Get an FCM token from Firebase asynchronously.
-
-        Loads any previously persisted FCM credentials from the tokenstore and
-        passes them to FcmPushClient so it can do a lightweight GCM check-in
-        instead of a full re-registration.  Full registration is only performed
-        on the very first run (or when existing credentials are no longer valid).
-        Google rate-limits full registrations, so avoiding them prevents the
-        PHONE_REGISTRATION_ERROR that occurs when the process restarts too often.
+        Loads persisted FCM credentials from the tokenstore and reuses them for
+        a lightweight GCM check-in. Legacy web-push credentials are upgraded to
+        Android app credentials before the token is used for MQTT authentication.
         """
         tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
         existing_credentials: Optional[Dict[str, Any]] = tokenstore.get(FCM_CREDENTIALS_KEY)
+        configured_username = self._get_configured_username()
+        cached_username = tokenstore.get(FCM_CREDENTIALS_USERNAME_KEY)
+        credentials_do_not_conflict_with_current_account = (
+            existing_credentials is not None
+            and configured_username is not None
+            and (cached_username is None or cached_username == configured_username)
+        )
+        if existing_credentials is not None and configured_username is not None:
+            credential_config = existing_credentials.get("config", {})
+            if (
+                credential_config.get("bundle_id") != FIREBASE_ANDROID_PACKAGE
+                or credential_config.get("project_id") != FIREBASE_PROJECT_ID
+                or credential_config.get("version") != FCM_CREDENTIALS_CONFIG_VERSION
+            ):
+                LOG.info("Cached FCM credentials do not match current Android Firebase config; attempting Android upgrade")
+            elif existing_credentials.get("config", {}).get("fcm_delete_requested") is True:
+                LOG.info("Cached FCM credentials are marked for refresh; keeping them unless recovery explicitly refreshes FCM")
+            elif cached_username is not None and cached_username != configured_username:
+                LOG.info("Cached FCM credentials belong to a different configured Skoda account; creating credentials for current account")
+                existing_credentials = None
+            elif cached_username is None and tokenstore.get(LAST_UPLOADED_NOTIFICATION_USER_ID_KEY) is None:
+                LOG.debug("Cached FCM credentials have no account marker; preserving them for compatibility")
+        LOG.debug(
+            'Loading FCM credentials from tokenstore: present=%s, account_marker_present=%s, bundle_id=%s, '
+            'project_id=%s, config_version=%s, '
+            'has_gcm=%s, has_fis=%s, has_registration=%s',
+            existing_credentials is not None,
+            cached_username is not None,
+            existing_credentials.get("config", {}).get("bundle_id") if existing_credentials else None,
+            existing_credentials.get("config", {}).get("project_id") if existing_credentials else None,
+            existing_credentials.get("config", {}).get("version") if existing_credentials else None,
+            bool(existing_credentials.get("gcm")) if existing_credentials else False,
+            bool(existing_credentials.get("fcm", {}).get("installation")) if existing_credentials else False,
+            bool(existing_credentials.get("fcm", {}).get("registration")) if existing_credentials else False,
+        )
+        if existing_credentials is not None:
+            configured_bundle_id: Optional[str] = existing_credentials.get("config", {}).get("bundle_id")
+            if configured_bundle_id != FIREBASE_ANDROID_PACKAGE:
+                LOG.info("Cached FCM credentials use bundle id %s; attempting Android upgrade", configured_bundle_id)
 
         fcm_config: FcmRegisterConfig = FcmRegisterConfig(
             FIREBASE_PROJECT_ID,
             FIREBASE_APP_ID,
             FIREBASE_API_KEY,
             FIREBASE_SENDER_ID,
+            FIREBASE_ANDROID_PACKAGE,
         )
         async with aiohttp.ClientSession(headers={
             "X-Android-Package": FIREBASE_ANDROID_PACKAGE,
             "X-Android-Cert": FIREBASE_ANDROID_CERT,
         }) as firebase_session:
-            client: FcmPushClient = FcmPushClient(
-                callback=self._ignore_push_message,
-                fcm_config=fcm_config,
-                credentials=existing_credentials,
-                credentials_updated_callback=self._on_fcm_credentials_updated,
+            register: SkodaFcmRegister = SkodaFcmRegister(
+                fcm_config,
+                existing_credentials,
+                self._on_fcm_credentials_updated,
                 http_client_session=firebase_session,
             )
-            return await client.checkin_or_register()
+            try:
+                has_refreshable_android_credentials = (
+                    existing_credentials is not None
+                    and credentials_do_not_conflict_with_current_account
+                    and bool(existing_credentials.get("gcm"))
+                    and bool(existing_credentials.get("fcm", {}).get("installation"))
+                )
+                if force_refresh and has_refreshable_android_credentials:
+                    LOG.info("Refreshing Android FCM registration after MQTT authentication failure")
+                    credentials = await register.refresh_android_registration()
+                else:
+                    credentials = await register.checkin_or_register()
+            finally:
+                await register.close()
+            token = credentials.get("fcm", {}).get("registration", {}).get("token") if credentials else None
+            if not token:
+                raise CarConnectivityError("FCM registration did not return a valid token")
+            return token
 
     def _on_fcm_credentials_updated(self, credentials: Dict[str, Any]) -> None:
         """Save updated FCM credentials to the tokenstore so they survive restarts."""
         tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
         tokenstore[FCM_CREDENTIALS_KEY] = credentials
-        LOG.debug('FCM credentials updated and saved to tokenstore')
+        configured_username = self._get_configured_username()
+        if configured_username is not None:
+            tokenstore[FCM_CREDENTIALS_USERNAME_KEY] = configured_username
+        self._skoda_connector.car_connectivity.persist()
+        LOG.debug(
+            'FCM credentials updated and saved to tokenstore: account_marker_present=%s, bundle_id=%s, project_id=%s, '
+            'config_version=%s, has_gcm=%s, has_fis=%s, has_registration=%s, fcm_token_fingerprint=%s',
+            configured_username is not None,
+            credentials.get("config", {}).get("bundle_id"),
+            credentials.get("config", {}).get("project_id"),
+            credentials.get("config", {}).get("version"),
+            bool(credentials.get("gcm")),
+            bool(credentials.get("fcm", {}).get("installation")),
+            bool(credentials.get("fcm", {}).get("registration")),
+            self._fingerprint_secret(credentials.get("fcm", {}).get("registration", {}).get("token")),
+        )
 
-    def _get_fcm_token(self) -> str:
-        """Get an FCM token from Firebase."""
-        return asyncio.run(self._async_get_fcm_token())
+    def _get_fcm_token(self, force_refresh: bool = False) -> str:
+        """Get an Android FCM token from Firebase."""
+        return asyncio.run(self._async_get_fcm_token(force_refresh=force_refresh))
 
-    def _register_fcm_token_with_skoda(self, fcm_token: str) -> None:
+    def _register_fcm_token_with_skoda(self, fcm_token: str, force: bool = False) -> bool:
         """Register the FCM token with Skoda's notifications API.
 
-        This is required so the MQTT broker can authenticate the client via TOTP
-        derived from the same FCM token.
-
-        This method is called from _on_pre_connect_callback, where the session is
-        guaranteed to be fully initialized and authenticated.
+        This is required so the MQTT broker can validate the TOTP derived from
+        the same FCM token. The request uses Android app headers to match the
+        MySkoda client registration flow.
 
         Args:
             fcm_token: The FCM token to register.
         """
+        language = "en"
+        country = "US"
+        tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
+        user_id = self._skoda_connector.user_id
+        with self._fcm_registration_lock:
+            self._fcm_token_registration_uploaded = False
+            if (
+                not force
+                and tokenstore.get(LAST_UPLOADED_NOTIFICATION_TOKEN_KEY) == fcm_token
+                and tokenstore.get(LAST_UPLOADED_NOTIFICATION_LANGUAGE_KEY) == language
+                and tokenstore.get(LAST_UPLOADED_NOTIFICATION_USER_ID_KEY) == user_id
+            ):
+                LOG.debug(
+                    'Skipping FCM token registration with Skoda notifications API; token, language, and user are unchanged: '
+                    'token_fingerprint=%s, language=%s, user_id_present=%s',
+                    self._fingerprint_secret(fcm_token),
+                    language,
+                    user_id is not None,
+                )
+                return True
+
+            LOG.debug(
+                'Registering FCM token with Skoda notifications API: token_fingerprint=%s, app_installation_id=%s, '
+                'app_version=%s, app_version_code=%s, language=%s, country=%s, user_id_present=%s',
+                self._fingerprint_secret(fcm_token),
+                self._app_installation_id,
+                MYSKODA_APP_VERSION,
+                MYSKODA_APP_VERSION_CODE,
+                language,
+                country,
+                user_id is not None,
+            )
+            try:
+                response = self._put_skoda_notification_subscription(fcm_token, "ACTIVE")
+                if response.status_code in (200, 201):
+                    LOG.debug('FCM token registered with Skoda notifications API (HTTP %s)', response.status_code)
+                    tokenstore[LAST_UPLOADED_NOTIFICATION_TOKEN_KEY] = fcm_token
+                    tokenstore[LAST_UPLOADED_NOTIFICATION_LANGUAGE_KEY] = language
+                    tokenstore[LAST_UPLOADED_NOTIFICATION_USER_ID_KEY] = user_id
+                    self._skoda_connector.car_connectivity.persist()
+                    self._fcm_token_registration_uploaded = True
+                    return True
+                else:
+                    LOG.warning(
+                        'FCM token registration with Skoda returned unexpected status %s: response_headers=%s response_body=%s',
+                        response.status_code,
+                        dict(response.headers),
+                        response.text[:200],
+                    )
+            except Exception as exc:  # pylint: disable=broad-except
+                LOG.warning('Could not register FCM token with Skoda notifications API: %s', exc)
+        return False
+
+    def _put_skoda_notification_subscription(self, fcm_token: str, device_status: str) -> requests.Response:
+        """Update one Skoda notification subscription using the Android payload."""
+        language = "en"
+        country = "US"
         url: str = f'{NOTIFICATIONS_SUBSCRIPTIONS_URL}{fcm_token}'
+        urllib3_connectionpool_logger = logging.getLogger("urllib3.connectionpool")
+        urllib3_connectionpool_log_level = urllib3_connectionpool_logger.level
         try:
-            response: requests.Response = self._skoda_connector.session.put(
+            urllib3_connectionpool_logger.setLevel(logging.INFO)
+            return self._skoda_connector.session.put(
                 url,
                 data=json.dumps({
                     "devicePlatform": "ANDROID",
                     "appVersion": MYSKODA_APP_VERSION,
-                    "language": "en",
+                    "language": language,
+                    "deviceStatus": device_status,
                 }),
-                headers={"content-type": "application/json"},
+                headers={
+                    "content-type": "application/json",
+                    "X-APP-VERSION-NAME": MYSKODA_APP_VERSION,
+                    "X-APP-VERSION-CODE": MYSKODA_APP_VERSION_CODE,
+                    "X-APP-INSTALLATION-ID": self._app_installation_id,
+                    "X-APP-PLATFORM": "Android",
+                    "X-DEVICE-LANGUAGE": language,
+                    "X-DEVICE-COUNTRY": country,
+                    "User-Agent": f"MySkoda/Android/{MYSKODA_APP_VERSION}/{MYSKODA_APP_VERSION_CODE}",
+                },
                 allow_redirects=True,
             )
-            if response.status_code in (200, 201):
-                LOG.debug('FCM token registered with Skoda notifications API (HTTP %s)', response.status_code)
-            else:
-                LOG.warning('FCM token registration with Skoda returned unexpected status %s', response.status_code)
+        finally:
+            urllib3_connectionpool_logger.setLevel(urllib3_connectionpool_log_level)
+
+    def _register_agent_id_once(self, force: bool = False) -> None:
+        """Call the Android app's parameterless agent-id registration once per Skoda user."""
+        tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
+        user_id = self._skoda_connector.user_id
+        if user_id is None or (not force and tokenstore.get(REGISTERED_AGENT_ID_USER_ID_KEY) == user_id):
+            return
+
+        url = "https://mysmob.api.connect.skoda-auto.cz/api/v1/users/agent-id"
+        LOG.debug(
+            'Registering Skoda agent id: user_id_fingerprint=%s, app_installation_id=%s, force=%s',
+            self._fingerprint_secret(user_id),
+            self._app_installation_id,
+            force,
+        )
+        try:
+            response = self._skoda_connector.session.post(
+                url,
+                headers={
+                    "X-APP-VERSION-NAME": MYSKODA_APP_VERSION,
+                    "X-APP-VERSION-CODE": MYSKODA_APP_VERSION_CODE,
+                    "X-APP-INSTALLATION-ID": self._app_installation_id,
+                    "X-APP-PLATFORM": "Android",
+                    "User-Agent": f"MySkoda/Android/{MYSKODA_APP_VERSION}/{MYSKODA_APP_VERSION_CODE}",
+                },
+                allow_redirects=True,
+            )
         except Exception as exc:  # pylint: disable=broad-except
-            LOG.warning('Could not register FCM token with Skoda notifications API: %s', exc)
+            LOG.warning('Could not register Skoda agent id: %s', exc)
+            return
+
+        agent_id = None
+        try:
+            response_json = response.json()
+            if isinstance(response_json, dict):
+                agent_id = response_json.get("agentId")
+        except ValueError:
+            response_json = None
+
+        if response.status_code in (200, 201):
+            tokenstore[REGISTERED_AGENT_ID_USER_ID_KEY] = user_id
+            self._skoda_connector.car_connectivity.persist()
+            LOG.debug(
+                'Registered Skoda agent id (HTTP %s): agent_id_fingerprint=%s',
+                response.status_code,
+                self._fingerprint_secret(agent_id) if isinstance(agent_id, str) else None,
+            )
+        else:
+            LOG.warning(
+                'Skoda agent id registration returned unexpected status %s: response_headers=%s response_body=%s',
+                response.status_code,
+                dict(response.headers),
+                response.text[:200],
+            )
+
+    def _handle_fcm_account_change_before_registration(self) -> None:
+        """Apply Android-like notification cleanup when the stored user changes."""
+        tokenstore: Dict[str, Any] = self._skoda_connector._manager.tokenstore  # pylint: disable=protected-access
+        current_user_id = self._skoda_connector.user_id
+        previous_user_id = tokenstore.get(LAST_UPLOADED_NOTIFICATION_USER_ID_KEY)
+        previous_fcm_token = tokenstore.get(LAST_UPLOADED_NOTIFICATION_TOKEN_KEY)
+        if (
+            current_user_id is None
+            or previous_user_id is None
+            or previous_user_id == current_user_id
+        ):
+            return
+
+        LOG.info('Detected Skoda user change before FCM notification registration; deactivating previous notification subscription')
+        if previous_fcm_token:
+            try:
+                response = self._put_skoda_notification_subscription(previous_fcm_token, "INACTIVE")
+                if response.status_code in (200, 201):
+                    LOG.debug(
+                        'Previous FCM notification subscription deactivated with Skoda notifications API (HTTP %s)',
+                        response.status_code,
+                    )
+                else:
+                    LOG.warning(
+                        'Previous FCM notification subscription deactivation returned unexpected status %s: %s',
+                        response.status_code,
+                        response.text[:200],
+                    )
+            except Exception as exc:  # pylint: disable=broad-except
+                LOG.warning('Could not deactivate previous FCM notification subscription with Skoda: %s', exc)
+
+        fcm_credentials = tokenstore.get(FCM_CREDENTIALS_KEY)
+        if isinstance(fcm_credentials, dict):
+            fcm_credentials.get("config", {}).pop("fcm_delete_requested", None)
+            fcm_credentials.setdefault("config", {})["fcm_delete_requested"] = True
+            tokenstore[FCM_CREDENTIALS_KEY] = fcm_credentials
+        else:
+            tokenstore.pop(FCM_CREDENTIALS_KEY, None)
+        tokenstore.pop(FCM_CREDENTIALS_USERNAME_KEY, None)
+        tokenstore.pop(LAST_UPLOADED_NOTIFICATION_TOKEN_KEY, None)
+        tokenstore.pop(LAST_UPLOADED_NOTIFICATION_LANGUAGE_KEY, None)
+        tokenstore.pop(LAST_UPLOADED_NOTIFICATION_USER_ID_KEY, None)
+        tokenstore.pop(REGISTERED_AGENT_ID_USER_ID_KEY, None)
+        self._skoda_connector.car_connectivity.persist()
+        self._fcm_token = None
+        self._fcm_token_registered = False
+        self._fcm_token_registration_uploaded = False
+        try:
+            self._fcm_token = self._get_fcm_token()
+            LOG.info('Created fresh FCM credentials after Skoda user change')
+        except Exception as exc:  # pylint: disable=broad-except
+            LOG.error('Could not create fresh FCM credentials after Skoda user change: %s', exc)
+
+    def _set_fcm_token_for_mqtt(self, fcm_token: str) -> bool:
+        """Store an FCM token and register it for MQTT TOTP authentication."""
+        self._fcm_token = fcm_token
+        self._fcm_token_registered = self._register_fcm_token_with_skoda(fcm_token)
+        if self._fcm_token_registered and self._fcm_token_registration_uploaded:
+            self._refresh_mqtt_token_after_fcm_upload()
+        return self._fcm_token_registered
+
+    def _refresh_mqtt_token_after_fcm_upload(self) -> None:
+        """Refresh the connect token once after a fresh notification token upload."""
+        if not self._refresh_mqtt_token_after_fcm_upload_once:
+            return
+        self._refresh_mqtt_token_after_fcm_upload_once = False
+        LOG.info('Refreshing MQTT connect token after successful FCM notification registration')
+        try:
+            self._skoda_connector.session.refresh()
+            self._retry_refresh_login_once = False
+        except TemporaryAuthenticationError as exc:
+            LOG.error('Token refresh after FCM notification registration failed due to temporary MySkoda error: %s', exc)
+        except ConnectionError as exc:
+            LOG.error('Token refresh after FCM notification registration failed due to connection error: %s', exc)
 
     @staticmethod
     def _generate_totp(fcm_token: str) -> str:
         """Generate a Time-Based One-Time Password (TOTP) derived from an FCM token."""
         key: bytes = hashlib.sha256(fcm_token.encode('utf-8')).digest()
-        time_step: bytes = struct.pack('>Q', int(datetime.now(timezone.utc).timestamp()) // 30)
+        step_number: int = int(datetime.now(timezone.utc).timestamp()) // 30
+        time_step: bytes = struct.pack('>Q', step_number)
         mac: bytes = hmac.new(key, time_step, hashlib.sha256).digest()
         offset: int = mac[-1] & 0x0F
         code: int = (
@@ -197,14 +964,34 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             | ((mac[offset + 2] & 0xFF) << 8)
             | (mac[offset + 3] & 0xFF)
         )
+        LOG.debug(
+            'Generated MQTT TOTP credentials: fcm_token_fingerprint=%s, time_step=%s, hmac=sha256',
+            SkodaMQTTClient._fingerprint_secret(fcm_token),
+            step_number,
+        )
         return str(code % (10 ** 6)).zfill(6)
+
+    @staticmethod
+    def _fingerprint_secret(secret: Optional[str]) -> Optional[str]:
+        """Return a short one-way fingerprint for comparing secret values in logs."""
+        if secret is None:
+            return None
+        return hashlib.sha256(secret.encode('utf-8')).hexdigest()[:12]
+
+    def _get_mqtt_password(self) -> Optional[str]:
+        """Return the current MQTT password."""
+        return self._skoda_connector.session.access_token
+
+    def _get_mqtt_username(self) -> str:
+        """Return the MQTT username used by the Android app: profile userId."""
+        return self._skoda_connector.user_id or 'android-app'
 
     def connect(self, *args, **kwargs) -> MQTTErrorCode:
         """
         Connects the MQTT client to the skoda server.
 
         The FCM token is fetched in a background thread (started during __init__).
-        The TOTP CONNECT properties are applied in _on_pre_connect_callback, which
+        The CONNECT properties are applied in _on_pre_connect_callback, which
         paho calls right before sending the CONNECT packet on every connect/reconnect.
 
         Returns:
@@ -212,15 +999,15 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         """
         self._skoda_connector.connection_state._set_value(value=ConnectionState.CONNECTING)  # pylint: disable=protected-access
 
-        return super().connect(*args, host='mqtt.messagehub.de', port=8883, keepalive=60,
+        return super().connect(*args, host='mqtt.messagehub.de', port=8883, keepalive=MQTT_KEEPALIVE_INTERVAL_SECONDS,
                                clean_start=True, **kwargs)
 
     def _on_pre_connect_callback(self, client: Client, userdata: Any) -> None:
         """
         Callback function that is called before the MQTT client connects to the broker.
 
-        Waits for the background FCM-token fetch to complete, then sets fresh TOTP
-        CONNECT properties and updates the access-token password.
+        Waits for the background FCM-token fetch to complete, then sets the MQTT
+        session expiry, fresh TOTP CONNECT properties, and access-token password.
 
         Args:
             client: The MQTT client instance (unused).
@@ -232,43 +1019,42 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         del client
         del userdata
 
-        # Wait for the background FCM prefetch (with a generous timeout).
-        # This runs inside paho's reconnect() before the CONNECT packet is sent,
-        # so it is safe to block briefly here.
-        if not self._fcm_token_event.wait(timeout=60):
-            LOG.warning('Timed out waiting for FCM token; TOTP authentication will be skipped')
+        with self._pre_connect_lock:
+            self._client_id = self._build_mqtt_client_id().encode("utf-8")
 
-        if self._fcm_token is not None:
+            # Wait for the background FCM prefetch (with a generous timeout).
+            # This runs inside paho's reconnect() before the CONNECT packet is sent,
+            # so it is safe to block briefly here.
+            if not self._fcm_token_event.wait(timeout=60):
+                LOG.warning('Timed out waiting for FCM token; TOTP authentication will be skipped')
+
             connect_props: Properties = Properties(PacketTypes.CONNECT)
-            connect_props.UserProperty = [
-                ('auth_method', 'totp_v1'),
-                ('auth_credentials', self._generate_totp(self._fcm_token)),
-            ]
-            # paho reads self._connect_properties in _send_connect(), which runs
-            # immediately after on_pre_connect returns.
-            self._connect_properties = connect_props  # pylint: disable=attribute-defined-outside-init
+            connect_props.SessionExpiryInterval = MQTT_SESSION_EXPIRY_INTERVAL_SECONDS
 
-            # Register the FCM token with Skoda's API so the broker can validate
-            # the TOTP.  This is done here (rather than in the background prefetch
-            # thread) because the session is guaranteed to be ready at this point.
-            if not self._fcm_token_registered:
-                self._register_fcm_token_with_skoda(self._fcm_token)
-                self._fcm_token_registered = True
-
-        if self._skoda_connector.session.expired or self._skoda_connector.session.access_token is None:
-            try:
-                self._skoda_connector.session.refresh()
-            except ConnectionError as exc:
-                LOG.error('Token refresh failed due to connection error: %s', exc)
-            except TemporaryAuthenticationError as exc:
-                LOG.error('Token refresh failed due to temporary MySkoda error: %s', exc)
-        if not self._skoda_connector.session.expired and self._skoda_connector.session.access_token is not None:
-            # The broker requires the actual user_id as the MQTT username (not a fixed string).
-            # Fetch it now if it hasn't been retrieved yet.
-            if self._skoda_connector.user_id is None:
-                self._skoda_connector.fetch_user()
-            self.username_pw_set(username=self._skoda_connector.user_id or 'android-app',
-                                 password=self._skoda_connector.session.access_token)
+            if self._skoda_connector.session.expired or self._skoda_connector.session.access_token is None:
+                try:
+                    self._skoda_connector.session.refresh()
+                except ConnectionError as exc:
+                    LOG.error('Token refresh failed due to connection error: %s', exc)
+                except TemporaryAuthenticationError as exc:
+                    LOG.error('Token refresh failed due to temporary MySkoda error: %s', exc)
+            if not self._skoda_connector.session.expired and self._skoda_connector.session.access_token is not None:
+                # The broker requires the actual user_id as the MQTT username (not a fixed string).
+                # Fetch it now if it hasn't been retrieved yet.
+                if self._skoda_connector.user_id is None:
+                    self._skoda_connector.fetch_user()
+                if self._fcm_token is not None and not self._fcm_token_registered:
+                    self._set_fcm_token_for_mqtt(self._fcm_token)
+                if self._fcm_token is not None:
+                    connect_props.UserProperty = [
+                        ('auth_method', 'totp_v1'),
+                        ('auth_credentials', self._generate_totp(self._fcm_token)),
+                    ]
+                self._connect_properties = connect_props  # pylint: disable=attribute-defined-outside-init
+                self.username_pw_set(username=self._get_mqtt_username(),
+                                     password=self._get_mqtt_password())
+            else:
+                self._connect_properties = connect_props  # pylint: disable=attribute-defined-outside-init
 
     def _on_carconnectivity_vehicle_enabled(self, element: GenericAttribute, flags: Observable.ObserverEvent) -> None:
         """
@@ -497,6 +1283,10 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
                                                                        flag=observer_flags,
                                                                        priority=Observable.ObserverPriority.USER_MID)
             self._retry_refresh_login_once = True
+            self._mqtt_auth_connect_token_refresh_attempts = 0
+            self._mqtt_auth_fcm_refresh_attempts = 0
+            self._mqtt_auth_recovery_exhausted = False
+            self.reconnect_delay_set(min_delay=1, max_delay=120)
             self._subscribe_vehicles()
 
         # Handle different reason codes
@@ -514,17 +1304,12 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             LOG.error('Could not connect (%s): Client identifier not valid', reason_code)
         elif reason_code == 134:
             LOG.error('Could not connect (%s): Bad user name or password', reason_code)
-            if self._retry_refresh_login_once is True:
-                self._retry_refresh_login_once = False
-                LOG.info('trying a relogin once to resolve the error')
-                try:
-                    self._skoda_connector.session.login()
-                except TemporaryAuthenticationError as exc:
-                    LOG.error('Login failed due to temporary MySkoda error: %s', exc)
-                except ConnectionError as exc:
-                    LOG.error('Login failed due to connection error: %s', exc)
+            if not self._recover_mqtt_auth_once('bad username or password'):
+                self._throttle_mqtt_auth_reconnects('bad username or password')
         elif reason_code == 135:
-            LOG.error('Could not connect (%s): Not authorized', reason_code)
+            LOG.error('Could not connect (%s): Not authorized (known issue; see README)', reason_code)
+            if not self._recover_mqtt_auth_once('not authorized'):
+                self._throttle_mqtt_auth_reconnects('not authorized')
         elif reason_code == 136:
             LOG.error('Could not connect (%s): Server unavailable', reason_code)
         elif reason_code == 137:
@@ -551,6 +1336,108 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
             LOG.error('Could not connect (%s): Connection rate exceeded', reason_code)
         else:
             LOG.error('Could not connect (%s)', reason_code)
+
+    def _recover_mqtt_auth_once(self, reason: str) -> bool:
+        """Run staged MQTT auth recovery and return whether a retry should be attempted.
+
+        Prefer the known-good auth path: first refresh the CONNECT token.
+        Only after those bounded attempts are exhausted, try one FCM
+        re-registration for MQTT Not authorized responses.
+        """
+        if self._refresh_mqtt_access_token_once(reason):
+            return True
+        return self._refresh_fcm_registration_after_mqtt_auth_fail(reason)
+
+    def _refresh_fcm_registration_after_mqtt_auth_fail(self, reason: str) -> bool:
+        """Refresh and re-upload the FCM registration after an MQTT auth failure."""
+        if reason != 'not authorized':
+            return False
+        if self._mqtt_auth_fcm_refresh_attempts >= 1:
+            return False
+        self._mqtt_auth_fcm_refresh_attempts += 1
+        LOG.warning(
+            'Refreshing Android FCM registration once after MQTT %s error; connect-token refresh attempts are exhausted (%d/%d)',
+            reason,
+            self._mqtt_auth_connect_token_refresh_attempts,
+            MQTT_AUTH_CONNECT_TOKEN_REFRESH_LIMIT,
+        )
+        try:
+            self._fcm_token = self._get_fcm_token(force_refresh=True)
+            self._fcm_token_registered = False
+            self._fcm_token_registration_uploaded = False
+            if not self._register_fcm_token_with_skoda(self._fcm_token, force=True):
+                LOG.warning('Skoda notification ACTIVE registration failed during MQTT %s recovery', reason)
+                return False
+            self._fcm_token_registered = True
+            try:
+                self._skoda_connector.session.refresh()
+                self._retry_refresh_login_once = False
+            except TemporaryAuthenticationError as exc:
+                LOG.error('Token refresh after FCM registration refresh failed due to temporary MySkoda error: %s', exc)
+            except ConnectionError as exc:
+                LOG.error('Token refresh after FCM registration refresh failed due to connection error: %s', exc)
+            self.reconnect_delay_set(
+                min_delay=MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS,
+                max_delay=MQTT_AUTH_FCM_REFRESH_INTERVAL_SECONDS,
+            )
+            return True
+        except Exception as exc:  # pylint: disable=broad-except
+            LOG.error('Could not refresh FCM registration during MQTT %s recovery: %s', reason, exc)
+            return False
+
+    def _refresh_mqtt_access_token_once(self, reason: str) -> bool:
+        """Refresh the connect token after an MQTT authentication failure."""
+        if reason not in ('not authorized', 'bad username or password'):
+            return False
+        refresh_limit = MQTT_AUTH_CONNECT_TOKEN_REFRESH_LIMIT
+        if self._mqtt_auth_connect_token_refresh_attempts >= refresh_limit:
+            return False
+        self._mqtt_auth_connect_token_refresh_attempts += 1
+        self._retry_refresh_login_once = False
+        LOG.debug(
+            'Trying MQTT connect-token refresh %d/%d to resolve MQTT %s error',
+            self._mqtt_auth_connect_token_refresh_attempts,
+            refresh_limit,
+            reason,
+        )
+        try:
+            self._skoda_connector.session.refresh()
+        except TemporaryAuthenticationError as exc:
+            LOG.error('Token refresh failed due to temporary MySkoda error: %s', exc)
+        except ConnectionError as exc:
+            LOG.error('Token refresh failed due to connection error: %s', exc)
+        self.reconnect_delay_set(
+            min_delay=MQTT_AUTH_RECONNECT_DELAY_SECONDS,
+            max_delay=MQTT_AUTH_RECONNECT_DELAY_SECONDS,
+        )
+        LOG.debug(
+            'MQTT auth reconnect delay set to %d seconds after refresh attempt %d/%d',
+            MQTT_AUTH_RECONNECT_DELAY_SECONDS,
+            self._mqtt_auth_connect_token_refresh_attempts,
+            refresh_limit,
+        )
+        return True
+
+    def _throttle_mqtt_auth_reconnects(self, reason: str) -> None:
+        """Avoid tight reconnect loops after all MQTT auth recovery steps were used."""
+        if self._mqtt_auth_recovery_exhausted:
+            return
+        self._mqtt_auth_recovery_exhausted = True
+        self.reconnect_delay_set(
+            min_delay=MQTT_AUTH_FAILURE_RECONNECT_DELAY_SECONDS,
+            max_delay=MQTT_AUTH_FAILURE_RECONNECT_DELAY_SECONDS,
+        )
+        LOG.error(
+            'MQTT %s error persists after %d connect-token refresh attempts; '
+            'FCM recovery attempts=%d; reconnects are throttled for %d seconds. '
+            'Check for another active connector using the same Skoda account. '
+            'For long-running MQTT, use a dedicated guest user in only one active connector instance. '
+            'See README known issues for MQTT Not authorized recovery guidance',
+            reason,
+            self._mqtt_auth_connect_token_refresh_attempts,
+            self._mqtt_auth_fcm_refresh_attempts,
+            MQTT_AUTH_FAILURE_RECONNECT_DELAY_SECONDS,
+        )
 
     def _on_disconnect_callback(self, client: Client, userdata, flags: DisconnectFlags, reason_code: ReasonCode, properties: Optional[Properties]) -> None:
         """["Client", Any, DisconnectFlags, ReasonCode, Union[Properties, None]
@@ -585,7 +1472,7 @@ class SkodaMQTTClient(Client):  # pylint: disable=too-many-instance-attributes
         elif reason_code == 4:
             LOG.info('Client successfully disconnected: %s', userdata)
         elif reason_code == 128:
-            LOG.info('Client disconnected: Needs new access token, trying to reconnect')
+            LOG.debug('Client disconnected: Unspecified error, trying to reconnect')
         elif reason_code == 137:
             LOG.error('Client disconnected: Server busy')
         elif reason_code == 139:

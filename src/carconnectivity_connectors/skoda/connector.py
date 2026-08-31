@@ -21,7 +21,7 @@ from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive, DieselDrive
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute
 from carconnectivity.commands import Commands
-from carconnectivity.charging import Charging
+from carconnectivity.charging import Charging, ChargingConnector
 from carconnectivity.position import Position
 from carconnectivity.climatization import Climatization
 from carconnectivity.command_impl import ClimatizationStartStopCommand, ChargingStartStopCommand
@@ -294,6 +294,8 @@ class Connector(BaseConnector):
                     LOG.debug('Promoting %s to SkodaElectricVehicle for %s (no fuelStatus, charging present)', vehicle.__class__.__name__, vehicle.vin.value)
                     vehicle = SkodaElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                     self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
+                # Set vehicle type attribute
+                vehicle.type._set_value(GenericVehicle.Type.ELECTRIC)  # pylint: disable=protected-access
                 # Ensure an ElectricDrive exists so charging code can update level/range
                 if 'primary' not in vehicle.drives.drives:
                     drive = ElectricDrive(drive_id='primary', drives=vehicle.drives,
@@ -532,8 +534,10 @@ class Connector(BaseConnector):
             vehicle.position.longitude._set_value(lon)  # pylint: disable=protected-access
             vehicle.position.longitude.precision = 0.000001
             vehicle.position.position_type._set_value(Position.PositionType.PARKING)  # pylint: disable=protected-access
+            vehicle.state._set_value(GenericVehicle.State.PARKED)  # pylint: disable=protected-access
         elif state == 'IN_MOTION':
             vehicle.position.position_type._set_value(Position.PositionType.MOVING)  # pylint: disable=protected-access
+            vehicle.state._set_value(GenericVehicle.State.DRIVING)  # pylint: disable=protected-access
         else:
             vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
             vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
@@ -576,6 +580,23 @@ class Connector(BaseConnector):
                     LOG_API.info('Unknown charging state %s', state_str)
                     charging_state = Charging.ChargingState.UNKNOWN
                 vehicle.charging.state._set_value(value=charging_state, measured=captured_at)  # pylint: disable=protected-access
+
+                # Derive connector connection state from charging state
+                if vehicle.charging.connector is not None:
+                    # Cable connected when anything other than CONNECT_CABLE (waiting for cable) or DISCHARGING
+                    cable_connected_states = {
+                        SkodaCharging.SkodaChargingState.CHARGING,
+                        SkodaCharging.SkodaChargingState.CONSERVING,
+                        SkodaCharging.SkodaChargingState.READY_FOR_CHARGING,
+                        SkodaCharging.SkodaChargingState.CHARGING_INTERRUPTED,
+                    }
+                    if state_str in [item.name for item in SkodaCharging.SkodaChargingState]:
+                        if skoda_state in cable_connected_states:
+                            vehicle.charging.connector.connection_state._set_value(  # pylint: disable=protected-access
+                                ChargingConnector.ChargingConnectorConnectionState.CONNECTED, measured=captured_at)
+                        else:
+                            vehicle.charging.connector.connection_state._set_value(  # pylint: disable=protected-access
+                                ChargingConnector.ChargingConnectorConnectionState.DISCONNECTED, measured=captured_at)
             else:
                 vehicle.charging.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
 

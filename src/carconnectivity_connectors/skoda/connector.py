@@ -19,7 +19,7 @@ from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive, DieselDrive
-from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute
+from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute, StringAttribute
 from carconnectivity.commands import Commands
 from carconnectivity.charging import Charging
 from carconnectivity.position import Position
@@ -30,7 +30,7 @@ from carconnectivity.window_heating import WindowHeatings
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.public_api_session import PublicApiSession
-from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle
+from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle, SUPPORT_IMAGES
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
 from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda._version import __version__
@@ -241,6 +241,22 @@ class Connector(BaseConnector):
         if 'licensePlate' in vehicle_data and vehicle_data['licensePlate'] is not None:
             vehicle.license_plate._set_value(vehicle_data['licensePlate'])  # pylint: disable=protected-access
 
+        # Render URL / vehicle image
+        render_url = vehicle_data.get('renderUrl')
+        if render_url is not None:
+            vehicle.render_url._set_value(render_url)  # pylint: disable=protected-access
+            if SUPPORT_IMAGES:
+                try:
+                    import io
+                    import requests as _requests
+                    img_response = _requests.get(render_url, timeout=10)
+                    img_response.raise_for_status()
+                    from PIL import Image as PILImage
+                    img = PILImage.open(io.BytesIO(img_response.content)).convert('RGBA')
+                    vehicle._car_images['render'] = img  # pylint: disable=protected-access
+                except Exception as img_err:  # pylint: disable=broad-except
+                    LOG.debug('Could not download render image for %s: %s', vin, img_err)
+
         # Determine the vehicle type from fuelStatus before updating drive ranges
         vehicle = self._update_fuel_status(vehicle, vehicle_data)
 
@@ -267,10 +283,17 @@ class Connector(BaseConnector):
         fuel_status = vehicle_data.get('fuelStatus')
         if fuel_status is None:
             # fuelStatus absent; if charging is present the vehicle is a BEV
-            if vehicle_data.get('charging') is not None and not isinstance(vehicle, SkodaElectricVehicle):
-                LOG.debug('Promoting %s to SkodaElectricVehicle for %s (no fuelStatus, charging present)', vehicle.__class__.__name__, vehicle.vin.value)
-                vehicle = SkodaElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
+            if vehicle_data.get('charging') is not None:
+                if not isinstance(vehicle, SkodaElectricVehicle):
+                    LOG.debug('Promoting %s to SkodaElectricVehicle for %s (no fuelStatus, charging present)', vehicle.__class__.__name__, vehicle.vin.value)
+                    vehicle = SkodaElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
+                    self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
+                # Ensure an ElectricDrive exists so charging code can update level/range
+                if 'primary' not in vehicle.drives.drives:
+                    drive = ElectricDrive(drive_id='primary', drives=vehicle.drives,
+                                         initialization=vehicle.drives.get_initialization('primary'))
+                    drive.type._set_value(GenericDrive.Type.ELECTRIC)  # pylint: disable=protected-access
+                    vehicle.drives.add_drive(drive)
             return vehicle
 
         captured_at: Optional[datetime] = robust_time_parse(fuel_status.get('carCapturedTimestamp')) if fuel_status.get('carCapturedTimestamp') else None
@@ -463,6 +486,26 @@ class Connector(BaseConnector):
                     LOG_API.info('Unknown lights value %s', lights)
 
             log_extra_keys(LOG_API, 'status.overall', overall, {'doorsLocked', 'locked', 'doors', 'windows', 'lights', 'reliableLockStatus'})
+
+        # detail: individual door/hatch open states (sunroof, trunk, bonnet)
+        detail = status.get('detail')
+        if detail is not None and vehicle.doors is not None:
+            detail_state_map = {
+                'CLOSED': Doors.OpenState.CLOSED,
+                'OPEN': Doors.OpenState.OPEN,
+                'UNSUPPORTED': Doors.OpenState.UNSUPPORTED,
+                'UNKNOWN': Doors.OpenState.UNKNOWN,
+            }
+            for part_id in ('sunroof', 'trunk', 'bonnet'):
+                part_str = detail.get(part_id)
+                if part_str is not None:
+                    part_state = detail_state_map.get(part_str, Doors.OpenState.UNKNOWN)
+                    if part_str not in detail_state_map:
+                        LOG_API.info('Unknown %s state %s', part_id, part_str)
+                    if part_id not in vehicle.doors.doors:
+                        vehicle.doors.doors[part_id] = Doors.Door(door_id=part_id, doors=vehicle.doors)
+                    vehicle.doors.doors[part_id].open_state._set_value(part_state, measured=captured_at)  # pylint: disable=protected-access
+            log_extra_keys(LOG_API, 'status.detail', detail, {'sunroof', 'trunk', 'bonnet'})
         log_extra_keys(LOG_API, 'status', status, {'overall', 'detail', 'carCapturedTimestamp'})
         return vehicle
 

@@ -8,7 +8,7 @@ from datetime import datetime
 
 from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionVehicle, HybridVehicle
 from carconnectivity.charging import Charging
-from carconnectivity.attributes import BooleanAttribute
+from carconnectivity.attributes import BooleanAttribute, StringAttribute
 
 from carconnectivity_connectors.skoda.capability import Capabilities
 from carconnectivity_connectors.skoda.charging import SkodaCharging
@@ -41,6 +41,8 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
             self.in_motion.parent = self
             self.ignition_on: BooleanAttribute = origin.ignition_on
             self.ignition_on.parent = self
+            self.render_url: StringAttribute = origin.render_url
+            self.render_url.parent = self
             self.last_measurement: Optional[datetime] = origin.last_measurement
             self.official_connection_state: Optional[GenericVehicle.ConnectionState] = origin.official_connection_state
             self.online_timeout_timer: Optional[threading.Timer] = origin.online_timeout_timer
@@ -57,6 +59,8 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
                                                                 initialization=self.get_initialization('in_motion'))
             self.ignition_on: BooleanAttribute = BooleanAttribute(name='ignition_on', parent=self, tags={'connector_custom'},
                                                                   initialization=self.get_initialization('ignition_on'))
+            self.render_url: StringAttribute = StringAttribute(name='render_url', parent=self, tags={'connector_custom'},
+                                                               initialization=self.get_initialization('render_url'))
             self.last_measurement = None
             self.official_connection_state = None
             self.online_timeout_timer: Optional[threading.Timer] = None

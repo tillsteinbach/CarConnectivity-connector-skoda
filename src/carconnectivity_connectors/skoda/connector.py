@@ -241,17 +241,25 @@ class Connector(BaseConnector):
         if 'licensePlate' in vehicle_data and vehicle_data['licensePlate'] is not None:
             vehicle.license_plate._set_value(vehicle_data['licensePlate'])  # pylint: disable=protected-access
 
-        # Render URL / vehicle image — download into _car_images['car_picture'] when Pillow is available
+        # Render URL / vehicle image — download when Pillow is available
+        # Stored in _car_images['render'] and also published in vehicle.images['car_picture']
         render_url = vehicle_data.get('renderUrl')
         if render_url is not None and SUPPORT_IMAGES:
             try:
                 import io
                 import requests as _requests
                 from PIL import Image as PILImage
+                from carconnectivity.attributes import ImageAttribute
                 img_response = _requests.get(render_url, timeout=10)
                 img_response.raise_for_status()
                 img = PILImage.open(io.BytesIO(img_response.content)).convert('RGBA')
-                vehicle._car_images['car_picture'] = img  # pylint: disable=protected-access
+                vehicle._car_images['render'] = img  # pylint: disable=protected-access
+                # Publish in the standard vehicle.images dict under 'car_picture'
+                if vehicle.images is not None:
+                    if 'car_picture' not in vehicle.images.images:
+                        vehicle.images.images['car_picture'] = ImageAttribute(
+                            name='car_picture', parent=vehicle.images, tags={'connector_custom'})
+                    vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
             except Exception as img_err:  # pylint: disable=broad-except
                 LOG.debug('Could not download render image for %s: %s', vin, img_err)
 
@@ -607,8 +615,12 @@ class Connector(BaseConnector):
                     if isinstance(drive, ElectricDrive):
                         range_m = battery.get('remainingCruisingRangeInMeters')
                         if range_m is not None:
-                            drive.range._set_value(value=range_m / 1000, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+                            range_km = range_m / 1000
+                            drive.range._set_value(value=range_km, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
                             drive.range.precision = 1
+                            # For a pure BEV the electric drive range is also the total range
+                            vehicle.drives.total_range._set_value(value=range_km, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+                            vehicle.drives.total_range.precision = 1
                         soc = battery.get('stateOfChargeInPercent')
                         if soc is not None:
                             drive.level._set_value(value=soc, measured=captured_at)  # pylint: disable=protected-access

@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 import threading
 import traceback
 import logging
+import netrc
+import os
 from datetime import datetime, timedelta, timezone
 
 from carconnectivity.garage import Garage
@@ -74,10 +76,32 @@ class Connector(BaseConnector):
 
         LOG.info("Loading skoda connector (public API) with config %s", config_remove_credentials(config))
 
-        # Validate and extract api_key
-        if 'api_key' not in config or not config['api_key']:
-            raise AuthenticationError('api_key must be provided in the connector configuration')
-        self.active_config['api_key'] = config['api_key']
+        # Validate and extract api_key — can come from config directly or from .netrc
+        if 'api_key' in config and config['api_key']:
+            self.active_config['api_key'] = config['api_key']
+        else:
+            if 'netrc' in config:
+                self.active_config['netrc'] = config['netrc']
+            else:
+                self.active_config['netrc'] = os.path.join(os.path.expanduser("~"), ".netrc")
+            try:
+                secrets = netrc.netrc(file=self.active_config['netrc'])
+                secret: tuple[str, str, str] | None = secrets.authenticators("skoda")
+                if secret is None:
+                    raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: skoda not found in netrc')
+                # Convention: store the API key in the password field of the netrc entry
+                _login, _account, password = secret
+                if not password:
+                    raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: '
+                                              'no password (API key) found for skoda entry')
+                self.active_config['api_key'] = password
+            except netrc.NetrcParseError as err:
+                raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: {err}') from err
+            except FileNotFoundError as err:
+                raise AuthenticationError(f'{self.active_config["netrc"]} netrc-file was not found. '
+                                          'Create it or provide api_key in config') from err
+        if not self.active_config.get('api_key'):
+            raise AuthenticationError('api_key must be provided in the connector configuration or via .netrc')
 
         # VINs must be explicitly configured
         if 'vins' not in config or not config['vins']:

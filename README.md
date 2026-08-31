@@ -51,26 +51,7 @@ In your `carconnectivity.json` add a section for the skoda connector:
                 "type": "skoda",
                 "config": {
                     "api_key": "your-api-key-from-myskoda-app",
-                    "vins": ["TMOCKAA0AA000000"]
-                }
-            }
-        ]
-    }
-}
-```
-
-Multiple vehicles:
-
-```json
-{
-    "carConnectivity": {
-        "connectors": [
-            {
-                "type": "skoda",
-                "config": {
-                    "api_key": "your-api-key-from-myskoda-app",
-                    "vins": ["VIN1", "VIN2"],
-                    "interval": 300
+                    "vins": ["TMBJB9NY5RF999999"]
                 }
             }
         ]
@@ -82,10 +63,73 @@ Multiple vehicles:
 
 | Key | Required | Default | Description |
 |---|---|---|---|
-| `api_key` | ✅ | — | API key created in the MyŠkoda app |
+| `api_key` | see below | — | API key created in the MyŠkoda app |
 | `vins` | ✅ | — | List of VINs (or comma-separated string) the key covers |
 | `interval` | ❌ | `300` | Poll interval in seconds (minimum 300) |
 | `max_age` | ❌ | `interval - 1` | Maximum cache age in seconds |
+| `netrc` | ❌ | `~/.netrc` | Path to a netrc file containing the API key |
+
+### Credentials
+
+The API key can be provided either directly in the config file or via a `.netrc` file.
+
+**Option 1 — config file:**
+```json
+{
+    "carConnectivity": {
+        "connectors": [
+            {
+                "type": "skoda",
+                "config": {
+                    "api_key": "your-api-key-from-myskoda-app",
+                    "vins": ["TMBJB9NY5RF999999"]
+                }
+            }
+        ]
+    }
+}
+```
+
+**Option 2 — netrc file** (API key in the `password` field):
+```
+# ~/.netrc
+machine skoda
+login unused
+password your-api-key-from-myskoda-app
+```
+
+With netrc the config can omit `api_key`:
+```json
+{
+    "carConnectivity": {
+        "connectors": [
+            {
+                "type": "skoda",
+                "config": {
+                    "vins": ["TMBJB9NY5RF999999"]
+                }
+            }
+        ]
+    }
+}
+```
+
+You can also point to a custom netrc path:
+```json
+{
+    "carConnectivity": {
+        "connectors": [
+            {
+                "type": "skoda",
+                "config": {
+                    "netrc": "/some/path/on/your/filesystem",
+                    "vins": ["TMBJB9NY5RF999999"]
+                }
+            }
+        ]
+    }
+}
+```
 
 ### Known issues
 

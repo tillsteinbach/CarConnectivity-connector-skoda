@@ -19,7 +19,7 @@ from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive, DieselDrive
-from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute, StringAttribute
+from carconnectivity.attributes import BooleanAttribute, DurationAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute
 from carconnectivity.commands import Commands
 from carconnectivity.charging import Charging
 from carconnectivity.position import Position
@@ -241,21 +241,19 @@ class Connector(BaseConnector):
         if 'licensePlate' in vehicle_data and vehicle_data['licensePlate'] is not None:
             vehicle.license_plate._set_value(vehicle_data['licensePlate'])  # pylint: disable=protected-access
 
-        # Render URL / vehicle image
+        # Render URL / vehicle image — download into _car_images['car_picture'] when Pillow is available
         render_url = vehicle_data.get('renderUrl')
-        if render_url is not None:
-            vehicle.render_url._set_value(render_url)  # pylint: disable=protected-access
-            if SUPPORT_IMAGES:
-                try:
-                    import io
-                    import requests as _requests
-                    img_response = _requests.get(render_url, timeout=10)
-                    img_response.raise_for_status()
-                    from PIL import Image as PILImage
-                    img = PILImage.open(io.BytesIO(img_response.content)).convert('RGBA')
-                    vehicle._car_images['render'] = img  # pylint: disable=protected-access
-                except Exception as img_err:  # pylint: disable=broad-except
-                    LOG.debug('Could not download render image for %s: %s', vin, img_err)
+        if render_url is not None and SUPPORT_IMAGES:
+            try:
+                import io
+                import requests as _requests
+                from PIL import Image as PILImage
+                img_response = _requests.get(render_url, timeout=10)
+                img_response.raise_for_status()
+                img = PILImage.open(io.BytesIO(img_response.content)).convert('RGBA')
+                vehicle._car_images['car_picture'] = img  # pylint: disable=protected-access
+            except Exception as img_err:  # pylint: disable=broad-except
+                LOG.debug('Could not download render image for %s: %s', vin, img_err)
 
         # Determine the vehicle type from fuelStatus before updating drive ranges
         vehicle = self._update_fuel_status(vehicle, vehicle_data)

@@ -135,5 +135,5 @@ class PublicApiSession(requests.Session):
                 detail = problem.get('detail', '')
                 problem_type = problem.get('type', '')
                 raise RetrievalError(f'Action {path} failed ({response.status_code}): {problem_type} — {detail}')
-            except (ValueError, KeyError):
-                raise RetrievalError(f'Action {path} failed. Status: {response.status_code}')  # pylint: disable=raise-missing-from
+            except (ValueError, KeyError) as parse_err:
+                raise RetrievalError(f'Action {path} failed. Status: {response.status_code}') from parse_err

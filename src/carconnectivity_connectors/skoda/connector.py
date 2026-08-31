@@ -253,18 +253,8 @@ class Connector(BaseConnector):
 
         # Promote vehicle type based on carType
         car_type_str = fuel_status.get('carType', 'UNKNOWN')
-        public_api_type_map: Dict[str, str] = {
-            'HYBRID': 'HYBRID',
-            'GASOLINE': 'GASOLINE',
-            'PETROL': 'PETROL',
-            'DIESEL': 'DIESEL',
-            'CNG': 'CNG',
-            'LPG': 'LPG',
-            'UNKNOWN': 'UNKNOWN',
-        }
-        mapped_type_str = public_api_type_map.get(car_type_str, 'UNKNOWN')
         try:
-            car_type = GenericVehicle.Type(mapped_type_str)
+            car_type = GenericVehicle.Type(car_type_str)
         except ValueError:
             LOG_API.warning('Unknown carType %s', car_type_str)
             car_type = GenericVehicle.Type.UNKNOWN
@@ -485,7 +475,7 @@ class Connector(BaseConnector):
             return vehicle
 
         if vehicle.charging is None:
-            raise ValueError('Vehicle has no charging object')
+            return vehicle
 
         # Ensure start-stop command is registered
         if not vehicle.charging.commands.contains_command('start-stop'):
@@ -751,8 +741,16 @@ class Connector(BaseConnector):
         if unit == Temperature.F:
             unit_str = 'FAHRENHEIT'
         body = {'targetTemperature': {'value': rounded_temp, 'unit': unit_str}}
-        # Note: the public API start endpoint accepts temperature; we stop first then start with new temp
-        self.session.post_action(f'/api/v1/vehicles/{vin}/air-conditioning/stop')
+        # Only stop first if AC is currently active; then start with the new target temperature.
+        climatization = temperature_attribute.parent.parent
+        if isinstance(climatization, Climatization) and climatization.state is not None \
+                and climatization.state.enabled and climatization.state.value not in (None,
+                                                                                      Climatization.ClimatizationState.OFF,
+                                                                                      Climatization.ClimatizationState.UNKNOWN):
+            try:
+                self.session.post_action(f'/api/v1/vehicles/{vin}/air-conditioning/stop')
+            except (RetrievalError, CommandError):
+                pass  # Ignore stop failures; proceed to start with new temperature
         self.session.post_action(f'/api/v1/vehicles/{vin}/air-conditioning/start', json_body=body)
         return target_temperature
 

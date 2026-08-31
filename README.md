@@ -1,5 +1,3 @@
-
-
 # CarConnectivity Connector for Skoda Vehicles
 [![GitHub sourcecode](https://img.shields.io/badge/Source-GitHub-green)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/tillsteinbach/CarConnectivity-connector-skoda)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/latest)
@@ -12,41 +10,48 @@
 
 ## CarConnectivity will become the successor of [WeConnect-python](https://github.com/tillsteinbach/WeConnect-python) in 2025 with similar functionality but support for other brands beyond Volkswagen!
 
-[CarConnectivity](https://github.com/tillsteinbach/CarConnectivity) is a python API to connect to various car services. This connector enables the integration of skoda vehicles through the WeConnect API. Look at [CarConnectivity](https://github.com/tillsteinbach/CarConnectivity) for other supported brands.
+[CarConnectivity](https://github.com/tillsteinbach/CarConnectivity) is a python API to connect to various car services. This connector enables the integration of Škoda vehicles through the **official Škoda Public API** (`public.api.connect.skoda-auto.cz`). Look at [CarConnectivity](https://github.com/tillsteinbach/CarConnectivity) for other supported brands.
+
+## Prerequisites
+
+This connector uses the **official Škoda Public Vehicle API** (beta). To use it you need:
+
+1. **MyŠkoda app v8.16+** — create an API key in the app's key-management screen / QR flow.
+2. **A list of VINs** — the public API is vehicle-bound and has no list-vehicles endpoint; you must supply your VIN(s) explicitly.
+
+> **Rate limit:** The public API allows **20 requests per hour per API key**. The default poll interval of 300 s (5 min) leaves headroom for commands. Do not lower the interval below 300 s.
+
+## Features supported by the public API
+
+| Feature | Status |
+|---|---|
+| Vehicle status (doors, windows, lights) | ✅ |
+| Fuel / battery level and range | ✅ |
+| Odometer | ✅ |
+| Parking position (GPS) | ✅ (requires Remote Access licence) |
+| Air conditioning status + start/stop | ✅ |
+| Window heating status | ✅ |
+| Charging status + start/stop | ✅ (EV/hybrid only) |
+| Charging settings (target SoC, mode, etc.) | ✅ read-only |
+| Honk & flash | ❌ not in public API |
+| Lock / unlock | ❌ not in public API |
+| Wake-up | ❌ not in public API |
+| Maintenance / inspection info | ❌ not in public API |
+| MQTT push events | ❌ not in public API |
 
 ## Configuration
-In your carconnectivity.json configuration add a section for the skoda connector like this:
-```
+
+In your `carconnectivity.json` add a section for the skoda connector:
+
+```json
 {
     "carConnectivity": {
         "connectors": [
             {
                 "type": "skoda",
                 "config": {
-                    "username": "test@test.de",
-                    "password": "testpassword123"
-                }
-            }
-        ]
-    }
-}
-```
-### Credentials
-If you do not want to provide your username or password inside the configuration you have to create a ".netrc" file at the appropriate location (usually this is your home folder):
-```
-# For WeConnect
-machine skoda
-login test@test.de
-password testpassword123
-```
-In this case the configuration needs to look like this:
-```
-{
-    "carConnectivity": {
-        "connectors": [
-            {
-                "type": "skoda",
-                "config": {
+                    "api_key": "your-api-key-from-myskoda-app",
+                    "vins": ["TMOCKAA0AA000000"]
                 }
             }
         ]
@@ -54,36 +59,35 @@ In this case the configuration needs to look like this:
 }
 ```
 
-You can also provide the location of the netrc file in the configuration.
-```
+Multiple vehicles:
+
+```json
 {
     "carConnectivity": {
         "connectors": [
             {
                 "type": "skoda",
                 "config": {
-                    "netrc": "/some/path/on/your/filesystem"
+                    "api_key": "your-api-key-from-myskoda-app",
+                    "vins": ["VIN1", "VIN2"],
+                    "interval": 300
                 }
             }
         ]
     }
 }
 ```
-The optional S-PIN needed for some commands can be provided in the account section of the netrc:
-```
-# For WeConnect
-machine skoda
-login test@test.de
-password testpassword123
-account 1234
-```
+
+### Configuration options
+
+| Key | Required | Default | Description |
+|---|---|---|---|
+| `api_key` | ✅ | — | API key created in the MyŠkoda app |
+| `vins` | ✅ | — | List of VINs (or comma-separated string) the key covers |
+| `interval` | ❌ | `300` | Poll interval in seconds (minimum 300) |
+| `max_age` | ❌ | `interval - 1` | Maximum cache age in seconds |
+
 ### Known issues
-#### MQTT `Not authorized`
-The Skoda backend may reject new MQTT tokens for some time after a fresh installation, container restart, account switch, or notification token change. This often clears within a few minutes, but in some cases it can take much longer. During this time the logs can show `Not authorized` (reason code `135`) even though login and token refresh are working.
-
-The connector retries automatically. On MQTT authentication failures it first refreshes the MQTT connect token a limited number of times. If that still fails, it performs at most one Android FCM notification re-registration, uploads the token to Skoda's notifications API again, and then backs off before retrying. This avoids repeatedly replacing notification tokens while Skoda's backend may still be propagating state. If MQTT still does not connect after recovery is exhausted, check the logs for notification registration failures before resetting credentials manually.
-
-In local testing, running multiple CarConnectivity or MQTT connector instances with the same Skoda user appeared to make `Not authorized` failures more likely or longer-lasting. This is an operational observation, not a confirmed Skoda API rule. For long-running MQTT tests or deployments, use a dedicated guest user and use that guest user in only one active connector instance at a time.
 
 #### Unexpected keys found
-Not all items that are presented in the data from the server are already implemented by the connector. Feel free to report interesting findings in your log data in the [Discussions](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/discussions) section or as an [Issue (Enhancement)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/issues). My time is very limited, so usually new features take some time to get into the library, also because I need to align functionallity between the connectors of all brands.
+Not all items that are presented in the data from the server are already implemented by the connector. Feel free to report interesting findings in your log data in the [Discussions](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/discussions) section or as an [Issue (Enhancement)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/issues). My time is very limited, so usually new features take some time to get into the library, also because I need to align functionality between the connectors of all brands.

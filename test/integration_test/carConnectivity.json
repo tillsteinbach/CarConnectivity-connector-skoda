@@ -8,7 +8,9 @@
                 "config": {
                     "log_level": "debug",
                     "api_log_level": "debug",
-                    "interval": 180
+                    "api_key": "your-api-key-from-myskoda-app",
+                    "vins": ["TMOCKAA0AA000000"],
+                    "interval": 300
                 }
             }
         ],

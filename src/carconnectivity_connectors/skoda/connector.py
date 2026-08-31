@@ -278,8 +278,8 @@ class Connector(BaseConnector):
         # Promote vehicle type based on carType
         car_type_str = fuel_status.get('carType', 'UNKNOWN')
         try:
-            car_type = GenericVehicle.Type(car_type_str)
-        except ValueError:
+            car_type = GenericVehicle.Type[car_type_str.upper()]
+        except KeyError:
             LOG_API.warning('Unknown carType %s', car_type_str)
             car_type = GenericVehicle.Type.UNKNOWN
 
@@ -317,8 +317,8 @@ class Connector(BaseConnector):
             if not drive_data:
                 continue
             try:
-                engine_type: GenericDrive.Type = GenericDrive.Type(drive_data.get('engineType', 'UNKNOWN'))
-            except ValueError:
+                engine_type: GenericDrive.Type = GenericDrive.Type[drive_data.get('engineType', 'UNKNOWN').upper()]
+            except KeyError:
                 LOG_API.warning('Unknown engineType %s', drive_data.get('engineType'))
                 engine_type = GenericDrive.Type.UNKNOWN
 

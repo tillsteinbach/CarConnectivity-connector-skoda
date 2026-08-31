@@ -724,21 +724,22 @@ class Connector(BaseConnector):
         # Window heating status
         window_heating = ac_data.get('windowHeating')
         if window_heating is not None and vehicle.window_heatings is not None:
-            wh_enabled = window_heating.get('enabled', False)
-            front_str = window_heating.get('front')
-            rear_str = window_heating.get('rear')
             state_wh_map = {
-                'ON': WindowHeatings.WindowHeatingState.ON,
-                'OFF': WindowHeatings.WindowHeatingState.OFF,
-                'UNKNOWN': WindowHeatings.WindowHeatingState.UNKNOWN,
-                'UNSUPPORTED': WindowHeatings.WindowHeatingState.UNSUPPORTED,
+                'ON': WindowHeatings.HeatingState.ON,
+                'OFF': WindowHeatings.HeatingState.OFF,
+                'UNKNOWN': WindowHeatings.HeatingState.UNKNOWN,
+                'UNSUPPORTED': WindowHeatings.HeatingState.UNSUPPORTED,
             }
-            if front_str is not None and 'front' in vehicle.window_heatings.heatings:
-                wh_front_state = state_wh_map.get(front_str, WindowHeatings.WindowHeatingState.UNKNOWN)
-                vehicle.window_heatings.heatings['front'].state._set_value(wh_front_state, measured=captured_at)  # pylint: disable=protected-access
-            if rear_str is not None and 'rear' in vehicle.window_heatings.heatings:
-                wh_rear_state = state_wh_map.get(rear_str, WindowHeatings.WindowHeatingState.UNKNOWN)
-                vehicle.window_heatings.heatings['rear'].state._set_value(wh_rear_state, measured=captured_at)  # pylint: disable=protected-access
+            for window_id, api_key in (('front', 'front'), ('rear', 'rear')):
+                window_str = window_heating.get(api_key)
+                if window_str is not None:
+                    wh_state = state_wh_map.get(window_str, WindowHeatings.HeatingState.UNKNOWN)
+                    if window_str not in ('ON', 'OFF', 'UNKNOWN', 'UNSUPPORTED'):
+                        LOG_API.info('Unknown window heating state %s for %s', window_str, window_id)
+                    if window_id not in vehicle.window_heatings.windows:
+                        wh_obj = WindowHeatings.WindowHeating(window_id=window_id, window_heatings=vehicle.window_heatings)
+                        vehicle.window_heatings.windows[window_id] = wh_obj
+                    vehicle.window_heatings.windows[window_id].heating_state._set_value(wh_state, measured=captured_at)  # pylint: disable=protected-access
             log_extra_keys(LOG_API, 'airConditioning.windowHeating', window_heating, {'enabled', 'front', 'rear'})
 
         log_extra_keys(LOG_API, 'airConditioning', ac_data, {'state', 'targetTemperature', 'estimatedReachOfTargetTemperatureAt',

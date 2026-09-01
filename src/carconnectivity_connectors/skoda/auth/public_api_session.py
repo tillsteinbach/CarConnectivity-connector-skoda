@@ -16,6 +16,8 @@ LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda.auth")
 
 BASE_URL: str = "https://public.api.connect.skoda-auto.cz"
 
+DEFAULT_TIMEOUT: int = 10
+
 
 class PublicApiSession(requests.Session):
     """
@@ -43,6 +45,7 @@ class PublicApiSession(requests.Session):
         self.cache: dict = {}
 
     def request(self, method, url, **kwargs):  # pylint: disable=arguments-differ
+        kwargs.setdefault('timeout', DEFAULT_TIMEOUT)
         response = super().request(method, url, **kwargs)
         # Track rate-limit headers
         if 'RateLimit-Remaining' in response.headers:

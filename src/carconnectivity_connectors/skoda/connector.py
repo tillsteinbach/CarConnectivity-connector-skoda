@@ -792,7 +792,7 @@ class Connector(BaseConnector):
 
         ac_without_power = ac_data.get('airConditioningWithoutExternalPower')
         if ac_without_power is not None and vehicle.climatization.settings is not None:
-            vehicle.climatization.settings.without_heat_source._set_value(value=ac_without_power, measured=captured_at)  # pylint: disable=protected-access
+            vehicle.climatization.settings.climatization_without_external_power._set_value(value=ac_without_power, measured=captured_at)  # pylint: disable=protected-access
 
         # Window heating status
         window_heating = ac_data.get('windowHeating')

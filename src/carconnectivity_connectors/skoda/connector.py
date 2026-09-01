@@ -536,7 +536,7 @@ class Connector(BaseConnector):
             vehicle.position.position_type._set_value(Position.PositionType.PARKING)  # pylint: disable=protected-access
             vehicle.state._set_value(GenericVehicle.State.PARKED)  # pylint: disable=protected-access
         elif state == 'IN_MOTION':
-            vehicle.position.position_type._set_value(Position.PositionType.MOVING)  # pylint: disable=protected-access
+            vehicle.position.position_type._set_value(Position.PositionType.DRIVING)  # pylint: disable=protected-access
             vehicle.state._set_value(GenericVehicle.State.DRIVING)  # pylint: disable=protected-access
         else:
             vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access

@@ -126,7 +126,6 @@ class Connector(BaseConnector):
 
         # Create session
         self.session: PublicApiSession = PublicApiSession(api_key=self.active_config['api_key'])
-        self.session.timeout = 60
 
         self._elapsed: List[timedelta] = []
 

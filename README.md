@@ -12,6 +12,18 @@
 
 [CarConnectivity](https://github.com/tillsteinbach/CarConnectivity) is a python API to connect to various car services. This connector enables the integration of Škoda vehicles through the **official Škoda Public API** (`public.api.connect.skoda-auto.cz`). Look at [CarConnectivity](https://github.com/tillsteinbach/CarConnectivity) for other supported brands.
 
+## Getting an API key
+
+Every request needs an API key. Keys are created and managed in the MyŠkoda app.
+
+Are you on a mobile phone with MyŠkoda installed? [Manage API keys](https://go.skoda.eu/api-keys)
+
+Reading this on a computer? Scan the QR code below with your phone to open key management in the app:
+
+![QR code linking to API key management in the MyŠkoda app](https://public.api.connect.skoda-auto.cz/docs/api-keys-qr.svg)
+
+Don't have MyŠkoda? [Download it here](https://go.skoda.eu/myskoda).
+
 ## Prerequisites
 
 This connector uses the **official Škoda Public Vehicle API** (beta). To use it you need:

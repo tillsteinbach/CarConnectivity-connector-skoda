@@ -131,6 +131,16 @@ class Connector(BaseConnector):
 
     def startup(self) -> None:
         self._stop_event.clear()
+        # Perform an eager, synchronous authentication check so that an invalid or expired API key is
+        # surfaced immediately as an AuthenticationError (letting the caller/CLI react to it), instead of
+        # only being logged and silently retried from within the background thread.
+        # AuthenticationError (but not its TemporaryAuthenticationError subclass) is intentionally left
+        # uncaught here so it propagates out of startup() to the caller.
+        if self.active_config['vins']:
+            try:
+                self.session.get_vehicle(self.active_config['vins'][0])
+            except (RetrievalError, TooManyRequestsError, APIError, APICompatibilityError, TemporaryAuthenticationError) as err:
+                LOG.warning('Could not perform initial authentication check (%s). Will retry in the background.', err)
         self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
         self._background_thread.name = 'carconnectivity.connectors.skoda-background'
         self._background_thread.start()

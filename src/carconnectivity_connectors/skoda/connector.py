@@ -30,7 +30,7 @@ from carconnectivity.window_heating import WindowHeatings
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.public_api_session import PublicApiSession
-from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle, SUPPORT_IMAGES
+from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle, SkodaDoor, SUPPORT_IMAGES
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
 from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda._version import __version__
@@ -510,7 +510,7 @@ class Connector(BaseConnector):
                     if part_str not in detail_state_map:
                         LOG_API.info('Unknown %s state %s', part_id, part_str)
                     if part_id not in vehicle.doors.doors:
-                        vehicle.doors.doors[part_id] = Doors.Door(door_id=part_id, doors=vehicle.doors)
+                        vehicle.doors.doors[part_id] = SkodaDoor(door_id=part_id, doors=vehicle.doors)
                     vehicle.doors.doors[part_id].open_state._set_value(part_state, measured=captured_at)  # pylint: disable=protected-access
             log_extra_keys(LOG_API, 'status.detail', detail, {'sunroof', 'trunk', 'bonnet'})
         log_extra_keys(LOG_API, 'status', status, {'overall', 'detail', 'carCapturedTimestamp'})

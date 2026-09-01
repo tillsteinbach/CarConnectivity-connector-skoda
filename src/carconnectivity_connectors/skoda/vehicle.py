@@ -8,7 +8,9 @@ from datetime import datetime
 
 from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionVehicle, HybridVehicle
 from carconnectivity.charging import Charging
-from carconnectivity.attributes import BooleanAttribute
+from carconnectivity.doors import Doors
+from carconnectivity.attributes import BooleanAttribute, EnumAttribute
+from carconnectivity.objects import GenericObject
 
 from carconnectivity_connectors.skoda.capability import Capabilities
 from carconnectivity_connectors.skoda.charging import SkodaCharging
@@ -70,6 +72,19 @@ class SkodaVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attribu
             if self.online_timeout_timer is not None:
                 self.online_timeout_timer.cancel()
                 self.online_timeout_timer = None
+
+
+class SkodaDoor(Doors.Door):
+    """A door with correctly typed state attributes."""
+    def __init__(self, door_id: str, doors: Doors, initialization: Optional[Dict] = None) -> None:
+        GenericObject.__init__(self, object_id=door_id, parent=doors, initialization=initialization)
+        self.door_id: str = door_id
+        self.open_state: EnumAttribute[Doors.OpenState] = EnumAttribute(
+            "open_state", self, tags={'carconnectivity'}, value_type=Doors.OpenState,
+            initialization=self.get_initialization('open_state'))
+        self.lock_state: EnumAttribute[Doors.LockState] = EnumAttribute(
+            "lock_state", self, tags={'carconnectivity'}, value_type=Doors.LockState,
+            initialization=self.get_initialization('lock_state'))
 
 
 class SkodaElectricVehicle(ElectricVehicle, SkodaVehicle):

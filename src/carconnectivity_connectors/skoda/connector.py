@@ -39,8 +39,11 @@ from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_sko
 from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda._version import __version__
 
+SUPPORT_IMAGES_STR: str = ""
 if SUPPORT_IMAGES:
     from PIL import Image as PILImage
+else:
+    SUPPORT_IMAGES_STR = "No module named 'PIL' (cannot find pillow library)"
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Union
@@ -1049,7 +1052,9 @@ class Connector(BaseConnector):
         return __version__
 
     def get_features(self) -> dict[str, tuple[bool, str]]:
-        return {}
+        features: dict[str, tuple[bool, str]] = {}
+        features['Images'] = (SUPPORT_IMAGES, SUPPORT_IMAGES_STR)
+        return features
 
     def get_type(self) -> str:
         return "carconnectivity-connector-skoda"

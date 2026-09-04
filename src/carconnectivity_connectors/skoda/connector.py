@@ -231,9 +231,14 @@ class Connector(BaseConnector):
             if not vehicle:
                 vehicle = SkodaVehicle(vin=vin, garage=garage, managing_connector=self,
                                        initialization=garage.get_initialization(vin))
-                garage.add_vehicle(vin, vehicle)
-
-            vehicle = self.fetch_vehicle(vehicle)
+                # Populate the vehicle before adding it to the garage.  The database
+                # plugin connects to newly added vehicles immediately and creates
+                # drive agents only for drives present at that point.
+                vehicle = self.fetch_vehicle(vehicle)
+                if garage.get_vehicle(vin) is None:
+                    garage.add_vehicle(vin, vehicle)
+            else:
+                vehicle = self.fetch_vehicle(vehicle)
         self.car_connectivity.transaction_end()
 
     def _fetch_vehicle_data(self, vin: str) -> Dict[str, Any]:
@@ -388,7 +393,8 @@ class Connector(BaseConnector):
                 if not isinstance(vehicle, SkodaElectricVehicle):
                     LOG.debug('Promoting %s to SkodaElectricVehicle for %s (no fuelStatus, charging present)', vehicle.__class__.__name__, vehicle.vin.value)
                     vehicle = SkodaElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                    self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
+                    if self.car_connectivity.garage.get_vehicle(vehicle.vin.value) is not None:
+                        self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
                 # Set vehicle type attribute
                 vehicle.type._set_value(GenericVehicle.Type.ELECTRIC)  # pylint: disable=protected-access
                 # Ensure an ElectricDrive exists so charging code can update level/range
@@ -420,16 +426,19 @@ class Connector(BaseConnector):
         if is_hybrid and not isinstance(vehicle, SkodaHybridVehicle):
             LOG.debug('Promoting %s to SkodaHybridVehicle for %s', vehicle.__class__.__name__, vehicle.vin.value)
             vehicle = SkodaHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-            self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
+            if self.car_connectivity.garage.get_vehicle(vehicle.vin.value) is not None:
+                self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
         elif is_electric_primary and not is_hybrid and not isinstance(vehicle, SkodaElectricVehicle):
             LOG.debug('Promoting %s to SkodaElectricVehicle for %s', vehicle.__class__.__name__, vehicle.vin.value)
             vehicle = SkodaElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-            self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
+            if self.car_connectivity.garage.get_vehicle(vehicle.vin.value) is not None:
+                self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
         elif car_type in (GenericVehicle.Type.GASOLINE, GenericVehicle.Type.PETROL, GenericVehicle.Type.DIESEL,
                           GenericVehicle.Type.CNG, GenericVehicle.Type.LPG) and not isinstance(vehicle, SkodaCombustionVehicle):
             LOG.debug('Promoting %s to SkodaCombustionVehicle for %s', vehicle.__class__.__name__, vehicle.vin.value)
             vehicle = SkodaCombustionVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-            self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
+            if self.car_connectivity.garage.get_vehicle(vehicle.vin.value) is not None:
+                self.car_connectivity.garage.replace_vehicle(vehicle.vin.value, vehicle)
 
         if car_type != GenericVehicle.Type.UNKNOWN:
             vehicle.type._set_value(car_type)  # pylint: disable=protected-access

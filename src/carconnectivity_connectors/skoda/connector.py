@@ -7,8 +7,6 @@ import traceback
 import logging
 import netrc
 import os
-import io
-import base64
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -34,16 +32,24 @@ from carconnectivity.window_heating import WindowHeatings
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.public_api_session import PublicApiSession, BASE_URL
-from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle, SUPPORT_IMAGES
+from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
 from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda._version import __version__
 
+SUPPORT_IMAGES = False
 SUPPORT_IMAGES_STR: str = ""
-if SUPPORT_IMAGES:
+try:
     from PIL import Image as PILImage
-else:
-    SUPPORT_IMAGES_STR = "No module named 'PIL' (cannot find pillow library)"
+    import base64
+    import io
+    SUPPORT_IMAGES = True
+    from carconnectivity.attributes import ImageAttribute
+except ImportError as exc:
+    if str(exc) == "No module named 'PIL'":
+        SUPPORT_IMAGES_STR = str(exc) + " (cannot find pillow library)"
+    else:
+        SUPPORT_IMAGES_STR = str(exc)  # pylint: disable=invalid-name
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Union
@@ -351,7 +357,6 @@ class Connector(BaseConnector):
         render_url = vehicle_data.get('renderUrl')
         if render_url is not None and SUPPORT_IMAGES:
             try:
-                from carconnectivity.attributes import ImageAttribute
                 img = self._fetch_image(render_url)
                 if img is not None:
                     img = img.convert('RGBA')

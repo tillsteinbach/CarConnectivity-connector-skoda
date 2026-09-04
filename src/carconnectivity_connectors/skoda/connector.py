@@ -286,17 +286,20 @@ class Connector(BaseConnector):
                 or (cache_date is not None and cache_date < (datetime.now(tz=timezone.utc) - timedelta(seconds=max_age_static))):
             try:
                 image_download_response = requests.get(image_url, stream=True, timeout=10)
-                if image_download_response.status_code == requests.codes['ok']:
-                    img = PILImage.open(image_download_response.raw)
-                    img.load()
-                    if self.session.cache is not None:
-                        buffered = io.BytesIO()
-                        img.save(buffered, format='PNG')
-                        img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-                        self.session.cache[image_url] = (img_str, str(datetime.now(tz=timezone.utc)))
-                else:
-                    LOG.debug('Could not download image %s. Status: %s', image_url, image_download_response.status_code)
-                    return None
+                try:
+                    if image_download_response.status_code == requests.codes['ok']:
+                        img = PILImage.open(image_download_response.raw)
+                        img.load()
+                        if self.session.cache is not None:
+                            buffered = io.BytesIO()
+                            img.save(buffered, format='PNG')
+                            img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                            self.session.cache[image_url] = (img_str, datetime.now(tz=timezone.utc).isoformat())
+                    else:
+                        LOG.debug('Could not download image %s. Status: %s', image_url, image_download_response.status_code)
+                        return None
+                finally:
+                    image_download_response.close()
             except requests.exceptions.RequestException as image_err:
                 LOG.debug('Could not download image %s: %s', image_url, image_err)
                 return None

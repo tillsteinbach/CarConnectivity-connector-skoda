@@ -43,13 +43,17 @@ try:
     from PIL import Image as PILImage
     import base64
     import io
-    SUPPORT_IMAGES = True
     from carconnectivity.attributes import ImageAttribute
-except ImportError as exc:
-    if str(exc) == "No module named 'PIL'":
-        SUPPORT_IMAGES_STR = str(exc) + " (cannot find pillow library)"
+    SUPPORT_IMAGES = True
+except ModuleNotFoundError as exc:
+    SUPPORT_IMAGES = False
+    if exc.name is not None and exc.name.startswith("PIL"):
+        SUPPORT_IMAGES_STR = "Pillow is not installed (install 'pillow' to enable Images support)"
     else:
-        SUPPORT_IMAGES_STR = str(exc)  # pylint: disable=invalid-name
+        SUPPORT_IMAGES_STR = str(exc)
+except ImportError as exc:
+    SUPPORT_IMAGES = False
+    SUPPORT_IMAGES_STR = str(exc)
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Union

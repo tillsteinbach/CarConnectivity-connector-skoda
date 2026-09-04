@@ -78,7 +78,8 @@ In your `carconnectivity.json` add a section for the skoda connector:
 | `api_key` | see below | — | API key created in the MyŠkoda app |
 | `vins` | ✅ | — | List of VINs (or comma-separated string) the key covers |
 | `interval` | ❌ | `300` | Poll interval in seconds (minimum 300) |
-| `max_age` | ❌ | `interval - 1` | Maximum cache age in seconds |
+| `max_age` | ❌ | `interval - 1` | Maximum cache age in seconds for vehicle data |
+| `max_age_static` | ❌ | `86400` (24 hours) | Maximum cache age in seconds for vehicle images |
 | `netrc` | ❌ | `~/.netrc` | Path to a netrc file containing the API key |
 
 ### Credentials

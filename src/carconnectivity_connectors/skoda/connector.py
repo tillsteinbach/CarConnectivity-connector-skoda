@@ -254,12 +254,16 @@ class Connector(BaseConnector):
         cache_date: Optional[datetime] = None
         max_age: Optional[int] = self.active_config.get('max_age')
         if max_age is not None and self.session.cache is not None and url in self.session.cache:
-            data, cache_date_string = self.session.cache[url]
-            cache_date = datetime.fromisoformat(cache_date_string)
+            try:
+                data, cache_date_string = self.session.cache[url]
+                cache_date = datetime.fromisoformat(cache_date_string)
+            except (TypeError, ValueError):
+                data = None
+                cache_date = None
         if data is None or max_age is None or (cache_date is not None and cache_date < (datetime.now(tz=timezone.utc) - timedelta(seconds=max_age))):
             data = self.session.get_vehicle(vin)
             if self.session.cache is not None:
-                self.session.cache[url] = (data, str(datetime.now(tz=timezone.utc)))
+                self.session.cache[url] = (data, datetime.now(tz=timezone.utc).isoformat())
         return data
 
     def _fetch_image(self, image_url: str) -> Optional[Any]:

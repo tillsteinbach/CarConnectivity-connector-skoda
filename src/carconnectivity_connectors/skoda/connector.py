@@ -128,7 +128,7 @@ class Connector(BaseConnector):
                                  f'(the public API is rate-limited to {PUBLIC_API_RATE_LIMIT_PER_HOUR} requests/hour/key)')
         self.active_config['max_age'] = self.active_config['interval'] - 1
         if 'max_age' in config:
-            self.active_config['max_age'] = config['max_age']
+            self.active_config['max_age'] = int(config['max_age'])
         # Images rarely change, so they can be cached for much longer than the regular vehicle data.
         self.active_config['max_age_static'] = 86400  # 24 hours
         if 'max_age_static' in config:

@@ -7,8 +7,6 @@ import traceback
 import logging
 import netrc
 import os
-import io
-import base64
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -34,13 +32,28 @@ from carconnectivity.window_heating import WindowHeatings
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.skoda.auth.public_api_session import PublicApiSession, BASE_URL
-from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle, SUPPORT_IMAGES
+from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
 from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda._version import __version__
 
-if SUPPORT_IMAGES:
+SUPPORT_IMAGES = False
+SUPPORT_IMAGES_STR: str = ""
+try:
     from PIL import Image as PILImage
+    import base64
+    import io
+    from carconnectivity.attributes import ImageAttribute
+    SUPPORT_IMAGES = True
+except ModuleNotFoundError as exc:
+    SUPPORT_IMAGES = False
+    if exc.name is not None and exc.name.startswith("PIL"):
+        SUPPORT_IMAGES_STR = "Pillow is not installed (install 'pillow' to enable Images support)"
+    else:
+        SUPPORT_IMAGES_STR = str(exc)
+except ImportError as exc:
+    SUPPORT_IMAGES = False
+    SUPPORT_IMAGES_STR = str(exc)
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Union
@@ -348,7 +361,6 @@ class Connector(BaseConnector):
         render_url = vehicle_data.get('renderUrl')
         if render_url is not None and SUPPORT_IMAGES:
             try:
-                from carconnectivity.attributes import ImageAttribute
                 img = self._fetch_image(render_url)
                 if img is not None:
                     img = img.convert('RGBA')
@@ -1049,7 +1061,9 @@ class Connector(BaseConnector):
         return __version__
 
     def get_features(self) -> dict[str, tuple[bool, str]]:
-        return {}
+        features: dict[str, tuple[bool, str]] = {}
+        features['Images'] = (SUPPORT_IMAGES, SUPPORT_IMAGES_STR)
+        return features
 
     def get_type(self) -> str:
         return "carconnectivity-connector-skoda"

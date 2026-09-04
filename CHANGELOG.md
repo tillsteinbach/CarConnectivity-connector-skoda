@@ -3,8 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
-### Added
-- Use `fullyChargedAt` attribute from the API when available to determine the estimated charging completion time, falling back to `remainingTimeToFullyChargedInMinutes` otherwise.
+
+## [0.13] - 2026-09-04
+### Changed
+- The whole connector has been refactored to use the new official public API of Skoda. Good job Skoda, you make the community happy!
 
 ## [0.12.6] - 2026-07-05
 ### Changed
@@ -190,7 +192,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.12.6...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.13...HEAD
+[0.13]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.13
 [0.12.6]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.6
 [0.12.5]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.5
 [0.12.4]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.4

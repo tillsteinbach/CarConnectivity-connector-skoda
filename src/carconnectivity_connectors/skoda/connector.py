@@ -7,7 +7,11 @@ import traceback
 import logging
 import netrc
 import os
+import io
+import base64
 from datetime import datetime, timedelta, timezone
+
+import requests
 
 from carconnectivity.garage import Garage
 from carconnectivity.vehicle import GenericVehicle
@@ -29,11 +33,14 @@ from carconnectivity.enums import ConnectionState
 from carconnectivity.window_heating import WindowHeatings
 
 from carconnectivity_connectors.base.connector import BaseConnector
-from carconnectivity_connectors.skoda.auth.public_api_session import PublicApiSession
+from carconnectivity_connectors.skoda.auth.public_api_session import PublicApiSession, BASE_URL
 from carconnectivity_connectors.skoda.vehicle import SkodaVehicle, SkodaElectricVehicle, SkodaCombustionVehicle, SkodaHybridVehicle, SUPPORT_IMAGES
 from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_skoda_charging_state
 from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda._version import __version__
+
+if SUPPORT_IMAGES:
+    from PIL import Image as PILImage
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Union
@@ -58,7 +65,8 @@ class Connector(BaseConnector):
         vins (list):    List of VINs the key covers (the public API has no
                         list-vehicles endpoint, so VINs must be configured).
         interval (int): Poll interval in seconds (min 300, default 300).
-        max_age (int):  Maximum cache age in seconds (default interval - 1).
+        max_age (int):  Maximum cache age in seconds for vehicle data (default interval - 1).
+        max_age_static (int): Maximum cache age in seconds for vehicle images (default 86400, 24 hours).
     """
 
     def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict, *args, initialization: Optional[Dict] = None, **kwargs) -> None:
@@ -120,12 +128,19 @@ class Connector(BaseConnector):
                                  f'(the public API is rate-limited to {PUBLIC_API_RATE_LIMIT_PER_HOUR} requests/hour/key)')
         self.active_config['max_age'] = self.active_config['interval'] - 1
         if 'max_age' in config:
-            self.active_config['max_age'] = config['max_age']
+            self.active_config['max_age'] = int(config['max_age'])
+        # Images rarely change, so they can be cached for much longer than the regular vehicle data.
+        self.active_config['max_age_static'] = 86400  # 24 hours
+        if 'max_age_static' in config:
+            self.active_config['max_age_static'] = config['max_age_static']
 
         self.interval._set_value(timedelta(seconds=self.active_config['interval']))  # pylint: disable=protected-access
 
         # Create session
         self.session: PublicApiSession = PublicApiSession(api_key=self.active_config['api_key'])
+        # Use the persistent cache provided by car_connectivity so that data (and especially images) survive
+        # across restarts, e.g. for CLI usage where every invocation would otherwise be a new set of requests.
+        self.session.cache = car_connectivity.get_cache()
 
         self._elapsed: List[timedelta] = []
 
@@ -221,6 +236,79 @@ class Connector(BaseConnector):
             vehicle = self.fetch_vehicle(vehicle)
         self.car_connectivity.transaction_end()
 
+    def _fetch_vehicle_data(self, vin: str) -> Dict[str, Any]:
+        """
+        Fetch the vehicle data for the given VIN, using the cache if available and not yet expired.
+
+        Caching is important e.g. for the CLI, where every invocation would otherwise count as a new
+        request against the public API's tight rate limit (20 requests/hour/key).
+
+        Args:
+            vin (str): Vehicle Identification Number.
+
+        Returns:
+            Dict[str, Any]: The raw response data from the public API.
+        """
+        url: str = f'{BASE_URL}/api/v1/vehicles/{vin}'
+        data: Optional[Dict[str, Any]] = None
+        cache_date: Optional[datetime] = None
+        max_age: Optional[int] = self.active_config.get('max_age')
+        if max_age is not None and self.session.cache is not None and url in self.session.cache:
+            try:
+                data, cache_date_string = self.session.cache[url]
+                cache_date = datetime.fromisoformat(cache_date_string)
+            except (TypeError, ValueError):
+                data = None
+                cache_date = None
+        if data is None or max_age is None or (cache_date is not None and cache_date < (datetime.now(tz=timezone.utc) - timedelta(seconds=max_age))):
+            data = self.session.get_vehicle(vin)
+            if self.session.cache is not None:
+                self.session.cache[url] = (data, datetime.now(tz=timezone.utc).isoformat())
+        return data
+
+    def _fetch_image(self, image_url: str) -> Optional[Any]:
+        """
+        Fetch and decode a vehicle image, using the (long-lived) static cache if available and not yet expired.
+
+        Images rarely change, so they are cached for much longer than the regular vehicle data
+        (see max_age_static, default 24 hours).
+
+        Args:
+            image_url (str): URL of the image to fetch.
+
+        Returns:
+            Optional[PIL.Image.Image]: The decoded image, or None if it could not be fetched.
+        """
+        img = None
+        cache_date: Optional[datetime] = None
+        max_age_static: Optional[int] = self.active_config.get('max_age_static')
+        if max_age_static is not None and self.session.cache is not None and image_url in self.session.cache:
+            img_str, cache_date_string = self.session.cache[image_url]
+            img = PILImage.open(io.BytesIO(base64.b64decode(img_str)))
+            cache_date = datetime.fromisoformat(cache_date_string)
+        if img is None or max_age_static is None \
+                or (cache_date is not None and cache_date < (datetime.now(tz=timezone.utc) - timedelta(seconds=max_age_static))):
+            try:
+                image_download_response = requests.get(image_url, stream=True, timeout=10)
+                try:
+                    if image_download_response.status_code == requests.codes['ok']:
+                        img = PILImage.open(image_download_response.raw)
+                        img.load()
+                        if self.session.cache is not None:
+                            buffered = io.BytesIO()
+                            img.save(buffered, format='PNG')
+                            img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                            self.session.cache[image_url] = (img_str, datetime.now(tz=timezone.utc).isoformat())
+                    else:
+                        LOG.debug('Could not download image %s. Status: %s', image_url, image_download_response.status_code)
+                        return None
+                finally:
+                    image_download_response.close()
+            except requests.exceptions.RequestException as image_err:
+                LOG.debug('Could not download image %s: %s', image_url, image_err)
+                return None
+        return img
+
     def fetch_vehicle(self, vehicle: SkodaVehicle) -> SkodaVehicle:  # noqa: C901  pylint: disable=too-many-branches,too-many-statements
         """
         Fetch all current data for one vehicle using GET /api/v1/vehicles/{vin}.
@@ -235,7 +323,7 @@ class Connector(BaseConnector):
         if vin is None:
             raise APIError('VIN is missing')
 
-        response_data = self.session.get_vehicle(vin)
+        response_data = self._fetch_vehicle_data(vin)
         vehicle_data: Dict[str, Any] = response_data.get('vehicle', {})
         api_errors: List[Dict[str, Any]] = response_data.get('errors', [])
 
@@ -255,22 +343,20 @@ class Connector(BaseConnector):
         render_url = vehicle_data.get('renderUrl')
         if render_url is not None and SUPPORT_IMAGES:
             try:
-                import io
-                import requests as _requests
-                from PIL import Image as PILImage
                 from carconnectivity.attributes import ImageAttribute
-                img_response = _requests.get(render_url, timeout=10)
-                img_response.raise_for_status()
-                img = PILImage.open(io.BytesIO(img_response.content)).convert('RGBA')
-                vehicle._car_images['render'] = img  # pylint: disable=protected-access
-                # Publish in the standard vehicle.images dict under 'car_picture'
-                if vehicle.images is not None:
-                    if 'car_picture' not in vehicle.images.images:
-                        vehicle.images.images['car_picture'] = ImageAttribute(
-                            name='car_picture', parent=vehicle.images, tags={'connector_custom'})
-                    vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
+                img = self._fetch_image(render_url)
+                if img is not None:
+                    img = img.convert('RGBA')
+                    vehicle._car_images['render'] = img  # pylint: disable=protected-access
+                    # Publish in the standard vehicle.images dict under 'car_picture'
+                    if vehicle.images is not None:
+                        if 'car_picture' not in vehicle.images.images:
+                            vehicle.images.images['car_picture'] = ImageAttribute(
+                                name='car_picture', parent=vehicle.images, tags={'connector_custom'})
+                        vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
             except Exception as img_err:  # pylint: disable=broad-except
                 LOG.debug('Could not download render image for %s: %s', vin, img_err)
+
 
         # Determine the vehicle type from fuelStatus before updating drive ranges
         vehicle = self._update_fuel_status(vehicle, vehicle_data)

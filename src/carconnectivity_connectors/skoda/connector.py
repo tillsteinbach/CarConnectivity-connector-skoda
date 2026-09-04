@@ -39,6 +39,9 @@ from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_sko
 from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda._version import __version__
 
+if SUPPORT_IMAGES:
+    from PIL import Image as PILImage
+
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Union
 
@@ -253,10 +256,10 @@ class Connector(BaseConnector):
         if max_age is not None and self.session.cache is not None and url in self.session.cache:
             data, cache_date_string = self.session.cache[url]
             cache_date = datetime.fromisoformat(cache_date_string)
-        if data is None or max_age is None or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=max_age))):
+        if data is None or max_age is None or (cache_date is not None and cache_date < (datetime.now(tz=timezone.utc) - timedelta(seconds=max_age))):
             data = self.session.get_vehicle(vin)
             if self.session.cache is not None:
-                self.session.cache[url] = (data, str(datetime.utcnow()))
+                self.session.cache[url] = (data, str(datetime.now(tz=timezone.utc)))
         return data
 
     def _fetch_image(self, image_url: str) -> Optional[Any]:
@@ -272,7 +275,6 @@ class Connector(BaseConnector):
         Returns:
             Optional[PIL.Image.Image]: The decoded image, or None if it could not be fetched.
         """
-        from PIL import Image as PILImage
         img = None
         cache_date: Optional[datetime] = None
         max_age_static: Optional[int] = self.active_config.get('max_age_static')
@@ -281,7 +283,7 @@ class Connector(BaseConnector):
             img = PILImage.open(io.BytesIO(base64.b64decode(img_str)))
             cache_date = datetime.fromisoformat(cache_date_string)
         if img is None or max_age_static is None \
-                or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=max_age_static))):
+                or (cache_date is not None and cache_date < (datetime.now(tz=timezone.utc) - timedelta(seconds=max_age_static))):
             try:
                 image_download_response = requests.get(image_url, stream=True, timeout=10)
                 if image_download_response.status_code == requests.codes['ok']:
@@ -291,7 +293,7 @@ class Connector(BaseConnector):
                         buffered = io.BytesIO()
                         img.save(buffered, format='PNG')
                         img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-                        self.session.cache[image_url] = (img_str, str(datetime.utcnow()))
+                        self.session.cache[image_url] = (img_str, str(datetime.now(tz=timezone.utc)))
                 else:
                     LOG.debug('Could not download image %s. Status: %s', image_url, image_download_response.status_code)
                     return None

@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- Use `fullyChargedAt` attribute from the API when available to determine the estimated charging completion time, falling back to `remainingTimeToFullyChargedInMinutes` otherwise.
 
 ## [0.12.6] - 2026-07-05
 ### Changed

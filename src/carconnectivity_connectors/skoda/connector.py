@@ -707,12 +707,18 @@ class Connector(BaseConnector):
             else:
                 vehicle.charging.power._set_value(None, measured=captured_at, unit=Power.KW)  # pylint: disable=protected-access
 
-            remaining_min = status.get('remainingTimeToFullyChargedInMinutes')
-            if remaining_min is not None and captured_at is not None:
-                estimated_date_reached = (captured_at + timedelta(minutes=remaining_min)).replace(second=0, microsecond=0)
-                vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached, measured=captured_at)  # pylint: disable=protected-access
-            else:
-                vehicle.charging.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+            fully_charged_at_str = status.get('fullyChargedAt')
+            estimated_date_reached: Optional[datetime] = None
+            if fully_charged_at_str is not None:
+                try:
+                    estimated_date_reached = robust_time_parse(fully_charged_at_str)
+                except ValueError:
+                    LOG_API.warning('Could not parse fullyChargedAt %s', fully_charged_at_str)
+            if estimated_date_reached is None:
+                remaining_min = status.get('remainingTimeToFullyChargedInMinutes')
+                if remaining_min is not None and captured_at is not None:
+                    estimated_date_reached = (captured_at + timedelta(minutes=remaining_min)).replace(second=0, microsecond=0)
+            vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached, measured=captured_at)  # pylint: disable=protected-access
 
             charge_type_str = status.get('chargeType')
             if charge_type_str is not None:
@@ -744,7 +750,7 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'charging.status.battery', battery, {'remainingCruisingRangeInMeters', 'stateOfChargeInPercent'})
                         break
             log_extra_keys(LOG_API, 'charging.status', status, {'chargingRateInKilometersPerHour', 'chargePowerInKw',
-                                                                 'remainingTimeToFullyChargedInMinutes', 'state', 'chargeType', 'battery'})
+                                                                 'remainingTimeToFullyChargedInMinutes', 'fullyChargedAt', 'state', 'chargeType', 'battery'})
 
         settings = charging_data.get('settings')
         if settings is not None:

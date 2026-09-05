@@ -195,8 +195,11 @@ class PublicApiSession(requests.Session):
         with self._keys_lock:
             if not key_state.expired or key_state not in self._keys:
                 return
+            removed_index = self._keys.index(key_state)
             self._keys.remove(key_state)
             if self._keys:
+                if removed_index < self._key_index:
+                    self._key_index -= 1
                 self._key_index = self._key_index % len(self._keys)
                 return
             self._key_index = 0

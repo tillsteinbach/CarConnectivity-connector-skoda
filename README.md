@@ -148,3 +148,5 @@ You can also point to a custom netrc path:
 
 #### Unexpected keys found
 Not all items that are presented in the data from the server are already implemented by the connector. Feel free to report interesting findings in your log data in the [Discussions](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/discussions) section or as an [Issue (Enhancement)](https://github.com/tillsteinbach/CarConnectivity-connector-skoda/issues). My time is very limited, so usually new features take some time to get into the library, also because I need to align functionality between the connectors of all brands.
+
+### Skoda, if you want to talk, contact me. I have some ideas how this can be improved for Skoda as well as the users!

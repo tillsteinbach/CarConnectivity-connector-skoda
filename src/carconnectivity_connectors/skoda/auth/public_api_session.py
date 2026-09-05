@@ -37,9 +37,22 @@ class ApiKeyState:
         self.remaining: Optional[int] = None
         self.limit: Optional[int] = None
         self.reset: Optional[int] = None
+        # Absolute point in time at which the current rate-limit window resets, computed from the
+        # relative "RateLimit-Reset" header (seconds) at the time it was received.
+        self.reset_at: Optional[datetime] = None
         self.expires_at: Optional[datetime] = None
         self.expired: bool = False
         self.expiry_warning_logged: bool = False
+
+    def is_available(self) -> bool:
+        """
+        Returns whether this key can currently be used for a request: either its remaining budget
+        for the current window is unknown/positive, or the rate-limit window is known to have
+        already reset (in which case the budget is assumed to be replenished).
+        """
+        if self.remaining is None or self.remaining > 0:
+            return True
+        return self.reset_at is not None and self.reset_at <= datetime.now(tz=timezone.utc)
 
     @property
     def masked_key(self) -> str:
@@ -116,7 +129,7 @@ class PublicApiSession(requests.Session):
         for offset in range(num_keys):
             index = (self._key_index + offset) % num_keys
             candidate = self._keys[index]
-            if candidate.remaining is None or candidate.remaining > 0:
+            if candidate.is_available():
                 self._key_index = (index + 1) % num_keys
                 return candidate
         # All keys report no remaining requests for the current window; rotate past the first
@@ -140,13 +153,14 @@ class PublicApiSession(requests.Session):
         if 'RateLimit-Reset' in headers:
             try:
                 key_state.reset = int(headers['RateLimit-Reset'])
+                key_state.reset_at = datetime.now(tz=timezone.utc) + timedelta(seconds=key_state.reset)
             except (ValueError, TypeError):
                 pass
         if 'X-API-Key-Expires-At' in headers:
             try:
                 key_state.expires_at = robust_time_parse(headers['X-API-Key-Expires-At'])
             except ValueError:
-                LOG.warning('Could not parse X-API-Key-Expires-At header value: %s', headers['X-API-Key-Expires-At'])
+                LOG.warning('Could not parse X-API-Key-Expires-At header value for API key %s', key_state.masked_key)
 
     @staticmethod
     def _check_key_expiry(key_state: ApiKeyState) -> None:
@@ -188,7 +202,12 @@ class PublicApiSession(requests.Session):
     def request(self, method, url, **kwargs):  # pylint: disable=arguments-differ
         kwargs.setdefault('timeout', DEFAULT_TIMEOUT)
         key_state = self._select_key()
-        self.headers['X-API-Key'] = key_state.key
+        # Pass the API key via the per-request headers instead of mutating the shared self.headers
+        # dict, so that concurrent calls to request() from multiple threads cannot race and send a
+        # request with another thread's API key.
+        request_headers = dict(kwargs.get('headers') or {})
+        request_headers['X-API-Key'] = key_state.key
+        kwargs['headers'] = request_headers
         response = super().request(method, url, **kwargs)
         self._update_key_state(key_state, response)
         return response

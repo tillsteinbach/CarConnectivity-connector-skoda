@@ -72,7 +72,9 @@ PUBLIC_API_MINIMUM_INTERVAL_SECONDS: int = 300
 # currently active (non-expired) API keys, since more keys allow for a bigger combined
 # rate-limit budget. Values leave headroom for a few command requests per hour on top of the
 # periodic polling. Key counts above 5 (the maximum the public API allows per account) use the
-# same interval as 5 keys.
+# same interval as 5 keys. Note that these dynamic values may go below
+# PUBLIC_API_MINIMUM_INTERVAL_SECONDS (which only applies to explicitly configured intervals),
+# since a single key still leaves 20/hour - 3600/240 = 5 requests/hour of headroom for commands.
 DYNAMIC_INTERVAL_BY_KEY_COUNT: Dict[int, int] = {
     1: 240,
     2: 120,
@@ -209,7 +211,7 @@ class Connector(BaseConnector):
             int: Poll interval in seconds.
         """
         num_keys = max(1, num_keys)
-        return DYNAMIC_INTERVAL_BY_KEY_COUNT.get(min(num_keys, 5), DYNAMIC_INTERVAL_BY_KEY_COUNT[5])
+        return DYNAMIC_INTERVAL_BY_KEY_COUNT[min(num_keys, 5)]
 
     def startup(self) -> None:
         self._stop_event.clear()

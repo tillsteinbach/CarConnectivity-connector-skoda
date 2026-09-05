@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from datetime import datetime, timedelta, timezone
 import logging
+import threading
 
 import requests
 
@@ -58,11 +59,12 @@ class ApiKeyState:
     def masked_key(self) -> str:
         """
         Returns the API key with everything but the last 8 characters masked, so it can be safely
-        displayed (e.g. in logs or the UI status page) without revealing the full key.
+        displayed (e.g. in logs or the UI status page) without revealing the full key. Even short
+        keys always have at least one character masked so the value cannot be reconstructed in full.
         """
-        if len(self.key) <= 8:
-            return self.key
-        return f'...{self.key[-8:]}'
+        visible_len = min(8, max(0, len(self.key) - 1))
+        visible = self.key[-visible_len:] if visible_len > 0 else ''
+        return '*' * (len(self.key) - visible_len) + visible
 
     def __repr__(self) -> str:
         return f'ApiKeyState(key={self.masked_key}, remaining={self.remaining}, limit={self.limit}, expires_at={self.expires_at})'
@@ -91,6 +93,8 @@ class PublicApiSession(requests.Session):
             raise AuthenticationError('At least one API key must be provided')
         self._keys: List[ApiKeyState] = [ApiKeyState(key=key) for key in keys]
         self._key_index: int = 0
+        # Guards _keys/_key_index against concurrent access from multiple threads calling request().
+        self._keys_lock: threading.Lock = threading.Lock()
         # Called (with no arguments) when the last unexpired API key is removed from the pool.
         self.on_all_keys_expired: Optional[Callable[[], None]] = None
         self.headers.update({
@@ -111,7 +115,8 @@ class PublicApiSession(requests.Session):
         Returns the list of currently configured (i.e. not yet expired) API keys and their state.
         Useful for e.g. displaying per-key rate-limit information in a UI.
         """
-        return list(self._keys)
+        with self._keys_lock:
+            return list(self._keys)
 
     def _select_key(self) -> ApiKeyState:
         """
@@ -123,18 +128,19 @@ class PublicApiSession(requests.Session):
             AuthenticationError: If no unexpired API key is configured.
             TooManyRequestsError: If all configured keys are exhausted for the current window.
         """
-        if not self._keys:
-            raise AuthenticationError('No unexpired API keys available. All configured API keys have expired.')
-        num_keys: int = len(self._keys)
-        for offset in range(num_keys):
-            index = (self._key_index + offset) % num_keys
-            candidate = self._keys[index]
-            if candidate.is_available():
-                self._key_index = (index + 1) % num_keys
-                return candidate
-        # All keys report no remaining requests for the current window; rotate past the first
-        # (oldest) one so a subsequent retry, once headers refresh, starts checking a different key.
-        self._key_index = (self._key_index + 1) % num_keys
+        with self._keys_lock:
+            if not self._keys:
+                raise AuthenticationError('No unexpired API keys available. All configured API keys have expired.')
+            num_keys: int = len(self._keys)
+            for offset in range(num_keys):
+                index = (self._key_index + offset) % num_keys
+                candidate = self._keys[index]
+                if candidate.is_available():
+                    self._key_index = (index + 1) % num_keys
+                    return candidate
+            # All keys report no remaining requests for the current window; rotate past the first
+            # (oldest) one so a subsequent retry, once headers refresh, starts checking a different key.
+            self._key_index = (self._key_index + 1) % num_keys
         raise TooManyRequestsError('Rate limit exceeded for all configured API keys.')
 
     @staticmethod
@@ -179,16 +185,17 @@ class PublicApiSession(requests.Session):
 
     def _remove_expired_key(self, key_state: ApiKeyState) -> None:
         """Removes an expired key from the pool, notifying if no unexpired key remains."""
-        if not key_state.expired or key_state not in self._keys:
-            return
-        self._keys.remove(key_state)
-        if self._keys:
-            self._key_index = self._key_index % len(self._keys)
-            return
-        self._key_index = 0
+        with self._keys_lock:
+            if not key_state.expired or key_state not in self._keys:
+                return
+            self._keys.remove(key_state)
+            if self._keys:
+                self._key_index = self._key_index % len(self._keys)
+                return
+            self._key_index = 0
         LOG.error('All configured API keys have expired. Please create a new one in the MyŠkoda app.')
         if self.on_all_keys_expired is not None:
-            self.on_all_keys_expired()
+            self.on_all_keys_expired()  # pylint: disable=not-callable
 
     def _update_key_state(self, key_state: ApiKeyState, response: requests.Response) -> None:
         """Updates the rate-limit and expiration state of a key from the response headers."""

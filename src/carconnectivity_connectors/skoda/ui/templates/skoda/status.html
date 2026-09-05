@@ -18,12 +18,6 @@
           <td>Connection</td>
           <td>{{ connector.connection_state.value.value if connector.connection_state.enabled else "unknown" }}</td>
       </tr>
-      {% if connector.session.rate_limit_limit is not none %}
-      <tr>
-        <td>Rate Limit</td>
-        <td>{{ connector.session.rate_limit_remaining }}/{{ connector.session.rate_limit_limit }} requests remaining</td>
-      </tr>
-      {% endif %}
       {% if connector.last_update.enabled and connector.last_update.value %}
       <tr>
         <td>Last Update</td>
@@ -32,4 +26,32 @@
       {% endif %}
   </tbody>
 </table>
+
+{% if connector.session.keys %}
+<h2>API Keys:</h2>
+<table class="table">
+  <thead>
+    <tr>
+      <th>API Key</th>
+      <th>Remaining Requests</th>
+      <th>Expires At</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for key_state in connector.session.keys %}
+    <tr>
+      <td>{{ key_state.masked_key }}</td>
+      <td>
+        {% if key_state.remaining is not none and key_state.limit is not none %}
+          {{ key_state.remaining }}/{{ key_state.limit }} requests remaining
+        {% else %}
+          unknown
+        {% endif %}
+      </td>
+      <td>{{ key_state.expires_at if key_state.expires_at else "unknown" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}

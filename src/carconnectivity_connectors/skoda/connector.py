@@ -74,8 +74,10 @@ class Connector(BaseConnector):
     Connector class for the Skoda Public API.
 
     Configuration keys:
-        api_key (str):  X-API-Key issued by the MyŠkoda app.
-        vins (list):    List of VINs the key covers (the public API has no
+        api_key (str or list): One or more X-API-Keys issued by the MyŠkoda app. When several keys
+                        are configured, requests are distributed over all of them to make use of
+                        their combined rate-limit budget.
+        vins (list):    List of VINs the key(s) cover (the public API has no
                         list-vehicles endpoint, so VINs must be configured).
         interval (int): Poll interval in seconds (min 300, default 300).
         max_age (int):  Maximum cache age in seconds for vehicle data (default interval - 1).
@@ -97,9 +99,18 @@ class Connector(BaseConnector):
 
         LOG.info("Loading skoda connector (public API) with config %s", config_remove_credentials(config))
 
-        # Validate and extract api_key — can come from config directly or from .netrc
+        # Validate and extract api_key(s) — can come from config directly or from .netrc.
+        # api_key may be a single string or a list of strings (multiple keys distribute the request
+        # budget, since the public API allows a maximum of 5 keys with 20 requests/hour each).
         if 'api_key' in config and config['api_key']:
-            self.active_config['api_key'] = config['api_key']
+            api_key_config = config['api_key']
+            if isinstance(api_key_config, str):
+                api_keys = [api_key_config]
+            elif isinstance(api_key_config, list):
+                api_keys = list(api_key_config)
+            else:
+                raise AuthenticationError('api_key must be a string or a list of strings')
+            self.active_config['api_key'] = [key for key in api_keys if key]
         else:
             if 'netrc' in config:
                 self.active_config['netrc'] = config['netrc']
@@ -110,12 +121,13 @@ class Connector(BaseConnector):
                 secret: tuple[str, str, str] | None = secrets.authenticators("skoda")
                 if secret is None:
                     raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: skoda not found in netrc')
-                # Convention: store the API key in the password field of the netrc entry
+                # Convention: store the API key(s) in the password field of the netrc entry.
+                # Multiple keys can be provided as a comma-separated list.
                 _login, _account, password = secret
                 if not password:
                     raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: '
                                               'no password (API key) found for skoda entry')
-                self.active_config['api_key'] = password
+                self.active_config['api_key'] = [key.strip() for key in password.split(',') if key.strip()]
             except netrc.NetrcParseError as err:
                 raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: {err}') from err
             except FileNotFoundError as err:
@@ -151,6 +163,9 @@ class Connector(BaseConnector):
 
         # Create session
         self.session: PublicApiSession = PublicApiSession(api_key=self.active_config['api_key'])
+        # If the last remaining unexpired API key expires, there is no way to continue talking to the
+        # API, so mark the connector as unhealthy.
+        self.session.on_all_keys_expired = lambda: self.healthy._set_value(value=False)  # pylint: disable=protected-access
         # Use the persistent cache provided by car_connectivity so that data (and especially images) survive
         # across restarts, e.g. for CLI usage where every invocation would otherwise be a new set of requests.
         self.session.cache = car_connectivity.get_cache()

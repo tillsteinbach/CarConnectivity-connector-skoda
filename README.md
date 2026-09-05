@@ -31,7 +31,7 @@ This connector uses the **official Škoda Public Vehicle API** (beta). To use it
 1. **MyŠkoda app v8.16+** — create an API key in the app's key-management screen / QR flow.
 2. **A list of VINs** — the public API is vehicle-bound and has no list-vehicles endpoint; you must supply your VIN(s) explicitly.
 
-> **Rate limit:** The public API allows **20 requests per hour per API key**. The default poll interval of 300 s (5 min) leaves headroom for commands. Do not lower the interval below 300 s.
+> **Rate limit:** The public API allows **20 requests per hour per API key** (max. 5 keys). The default poll interval of 300 s (5 min) leaves headroom for commands. Do not lower the interval below 300 s. Configure multiple API keys (see [Multiple API keys](#multiple-api-keys)) to combine their rate-limit budgets.
 
 ## Features supported by the public API
 
@@ -75,12 +75,39 @@ In your `carconnectivity.json` add a section for the skoda connector:
 
 | Key | Required | Default | Description |
 |---|---|---|---|
-| `api_key` | see below | — | API key created in the MyŠkoda app |
-| `vins` | ✅ | — | List of VINs (or comma-separated string) the key covers |
+| `api_key` | see below | — | One API key, or a list of API keys, created in the MyŠkoda app. When multiple keys are configured, requests are distributed across all of them to combine their rate-limit budgets. |
+| `vins` | ✅ | — | List of VINs (or comma-separated string) the key(s) cover |
 | `interval` | ❌ | `300` | Poll interval in seconds (minimum 300) |
 | `max_age` | ❌ | `interval - 1` | Maximum cache age in seconds for vehicle data |
 | `max_age_static` | ❌ | `86400` (24 hours) | Maximum cache age in seconds for vehicle images |
-| `netrc` | ❌ | `~/.netrc` | Path to a netrc file containing the API key |
+| `netrc` | ❌ | `~/.netrc` | Path to a netrc file containing the API key(s) |
+
+### Multiple API keys
+
+The public API allows up to 5 API keys, each limited to 20 requests/hour. If you have more vehicles
+or want more headroom for commands, create several keys in the MyŠkoda app and configure them as a
+list:
+
+```json
+{
+    "carConnectivity": {
+        "connectors": [
+            {
+                "type": "skoda",
+                "config": {
+                    "api_key": ["your-first-api-key", "your-second-api-key"],
+                    "vins": ["TMBJB9NY5RF999999"]
+                }
+            }
+        ]
+    }
+}
+```
+
+Requests are distributed evenly across all configured keys. When a key expires (based on the
+`X-API-Key-Expires-At` response header) it is automatically removed from the pool and a warning is
+logged; an info message is logged once a key is within 7 days of expiring. If every configured key
+expires, an error is logged and the connector is marked unhealthy.
 
 ### Credentials
 
@@ -103,7 +130,7 @@ The API key can be provided either directly in the config file or via a `.netrc`
 }
 ```
 
-**Option 2 — netrc file** (API key in the `password` field):
+**Option 2 — netrc file** (API key in the `password` field, multiple keys can be comma-separated):
 ```
 # ~/.netrc
 machine skoda

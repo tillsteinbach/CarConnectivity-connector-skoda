@@ -141,7 +141,14 @@ class PublicApiSession(requests.Session):
             # All keys report no remaining requests for the current window; rotate past the first
             # (oldest) one so a subsequent retry, once headers refresh, starts checking a different key.
             self._key_index = (self._key_index + 1) % num_keys
-        raise TooManyRequestsError('Rate limit exceeded for all configured API keys.')
+            reset_ats = [key.reset_at for key in self._keys if key.reset_at is not None]
+        retry_after: Optional[int] = None
+        message = 'Rate limit exceeded for all configured API keys.'
+        if reset_ats:
+            earliest_reset = min(reset_ats)
+            retry_after = max(0, int((earliest_reset - datetime.now(tz=timezone.utc)).total_seconds()))
+            message += f' Earliest reset at {earliest_reset.isoformat()} (in {retry_after}s).'
+        raise TooManyRequestsError(message, retry_after=retry_after)
 
     @staticmethod
     def _parse_rate_limit_headers(key_state: ApiKeyState, headers) -> None:
@@ -200,9 +207,10 @@ class PublicApiSession(requests.Session):
     def _update_key_state(self, key_state: ApiKeyState, response: requests.Response) -> None:
         """Updates the rate-limit and expiration state of a key from the response headers."""
         self._parse_rate_limit_headers(key_state, response.headers)
-        self.rate_limit_remaining = key_state.remaining
-        self.rate_limit_limit = key_state.limit
-        self.rate_limit_reset = key_state.reset
+        with self._keys_lock:
+            self.rate_limit_remaining = key_state.remaining
+            self.rate_limit_limit = key_state.limit
+            self.rate_limit_reset = key_state.reset
         self._check_key_expiry(key_state)
         self._remove_expired_key(key_state)
 

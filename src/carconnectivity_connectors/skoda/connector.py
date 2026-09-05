@@ -108,6 +108,8 @@ class Connector(BaseConnector):
                 api_keys = [api_key_config]
             elif isinstance(api_key_config, list):
                 api_keys = list(api_key_config)
+                if not all(isinstance(key, str) for key in api_keys):
+                    raise AuthenticationError('api_key list must only contain strings')
             else:
                 raise AuthenticationError('api_key must be a string or a list of strings')
             self.active_config['api_key'] = [key for key in api_keys if key]

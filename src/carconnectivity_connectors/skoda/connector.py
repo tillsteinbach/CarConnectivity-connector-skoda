@@ -68,6 +68,19 @@ LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.skoda-ap
 PUBLIC_API_RATE_LIMIT_PER_HOUR: int = 20
 PUBLIC_API_MINIMUM_INTERVAL_SECONDS: int = 300
 
+# When no explicit interval is configured, the poll interval is derived from the number of
+# currently active (non-expired) API keys, since more keys allow for a bigger combined
+# rate-limit budget. Values leave headroom for a few command requests per hour on top of the
+# periodic polling. Key counts above 5 (the maximum the public API allows per account) use the
+# same interval as 5 keys.
+DYNAMIC_INTERVAL_BY_KEY_COUNT: Dict[int, int] = {
+    1: 240,
+    2: 120,
+    3: 65,
+    4: 50,
+    5: 40,
+}
+
 
 class Connector(BaseConnector):
     """
@@ -79,7 +92,9 @@ class Connector(BaseConnector):
                         their combined rate-limit budget.
         vins (list):    List of VINs the key(s) cover (the public API has no
                         list-vehicles endpoint, so VINs must be configured).
-        interval (int): Poll interval in seconds (min 300, default 300).
+        interval (int): Poll interval in seconds (min 300). If not set, a dynamic interval is used
+                        that adapts to the number of currently active API keys (see
+                        DYNAMIC_INTERVAL_BY_KEY_COUNT).
         max_age (int):  Maximum cache age in seconds for vehicle data (default interval - 1).
         max_age_static (int): Maximum cache age in seconds for vehicle images (default 86400, 24 hours).
     """
@@ -146,15 +161,21 @@ class Connector(BaseConnector):
             vins = [v.strip() for v in vins.split(',') if v.strip()]
         self.active_config['vins'] = list(vins)
 
-        # Poll interval
-        self.active_config['interval'] = PUBLIC_API_MINIMUM_INTERVAL_SECONDS
-        if 'interval' in config:
+        # Poll interval — if not explicitly configured, a dynamic interval is derived from the
+        # number of currently active (non-expired) API keys (see DYNAMIC_INTERVAL_BY_KEY_COUNT).
+        # The dynamic interval (and, unless overridden, max_age) is recomputed on every iteration
+        # of the background loop so it reacts to keys expiring over time.
+        self._dynamic_interval: bool = 'interval' not in config
+        self._dynamic_max_age: bool = 'max_age' not in config
+        if self._dynamic_interval:
+            self.active_config['interval'] = self._compute_dynamic_interval(len(self.active_config['api_key']))
+        else:
             self.active_config['interval'] = int(config['interval'])
             if self.active_config['interval'] < PUBLIC_API_MINIMUM_INTERVAL_SECONDS:
                 raise ValueError(f'Interval must be at least {PUBLIC_API_MINIMUM_INTERVAL_SECONDS} seconds '
                                  f'(the public API is rate-limited to {PUBLIC_API_RATE_LIMIT_PER_HOUR} requests/hour/key)')
         self.active_config['max_age'] = self.active_config['interval'] - 1
-        if 'max_age' in config:
+        if not self._dynamic_max_age:
             self.active_config['max_age'] = int(config['max_age'])
         # Images rarely change, so they can be cached for much longer than the regular vehicle data.
         self.active_config['max_age_static'] = 86400  # 24 hours
@@ -174,6 +195,22 @@ class Connector(BaseConnector):
 
         self._elapsed: List[timedelta] = []
 
+    @staticmethod
+    def _compute_dynamic_interval(num_keys: int) -> int:
+        """
+        Computes the poll interval (in seconds) to use when no explicit interval is configured,
+        based on the number of currently active (non-expired) API keys. More keys provide a bigger
+        combined rate-limit budget and therefore allow for more frequent polling.
+
+        Args:
+            num_keys (int): Number of currently active API keys.
+
+        Returns:
+            int: Poll interval in seconds.
+        """
+        num_keys = max(1, num_keys)
+        return DYNAMIC_INTERVAL_BY_KEY_COUNT.get(min(num_keys, 5), DYNAMIC_INTERVAL_BY_KEY_COUNT[5])
+
     def startup(self) -> None:
         self._stop_event.clear()
         # Perform an eager, synchronous authentication check so that an invalid or expired API key is
@@ -191,11 +228,29 @@ class Connector(BaseConnector):
         self._background_thread.start()
         self.healthy._set_value(value=True)  # pylint: disable=protected-access
 
+    def _update_interval(self) -> int:
+        """
+        In dynamic mode (no explicit interval configured), recomputes the poll interval based on
+        the number of currently active API keys, keeping active_config, the exposed interval
+        attribute, and (unless max_age was explicitly configured) max_age in sync.
+
+        Returns:
+            int: Poll interval in seconds to use for the current iteration.
+        """
+        if self._dynamic_interval:
+            interval = self._compute_dynamic_interval(len(self.session.keys))
+            if interval != self.active_config['interval']:
+                self.active_config['interval'] = interval
+                if self._dynamic_max_age:
+                    self.active_config['max_age'] = max(0, interval - 1)
+                self.interval._set_value(timedelta(seconds=interval))  # pylint: disable=protected-access
+        return self.active_config['interval']
+
     def _background_loop(self) -> None:
         self._stop_event.clear()
         self.connection_state._set_value(value=ConnectionState.CONNECTING)  # pylint: disable=protected-access
         while not self._stop_event.is_set():
-            interval = self.active_config['interval']
+            interval = self._update_interval()
             try:
                 self.fetch_all()
                 self.last_update._set_value(value=datetime.now(tz=timezone.utc))  # pylint: disable=protected-access

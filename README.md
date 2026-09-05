@@ -31,7 +31,7 @@ This connector uses the **official Škoda Public Vehicle API** (beta). To use it
 1. **MyŠkoda app v8.16+** — create an API key in the app's key-management screen / QR flow.
 2. **A list of VINs** — the public API is vehicle-bound and has no list-vehicles endpoint; you must supply your VIN(s) explicitly.
 
-> **Rate limit:** The public API allows **20 requests per hour per API key** (max. 5 keys). The default poll interval of 300 s (5 min) leaves headroom for commands. Do not lower the interval below 300 s. Configure multiple API keys (see [Multiple API keys](#multiple-api-keys)) to combine their rate-limit budgets.
+> **Rate limit:** The public API allows **20 requests per hour per API key** (max. 5 keys). If `interval` is not configured, the connector automatically picks a poll interval based on how many API keys are currently active/available (see [Dynamic poll interval](#dynamic-poll-interval)). If you configure `interval` explicitly, do not lower it below 300 s for a single key. Configure multiple API keys (see [Multiple API keys](#multiple-api-keys)) to combine their rate-limit budgets.
 
 ## Features supported by the public API
 
@@ -77,7 +77,7 @@ In your `carconnectivity.json` add a section for the skoda connector:
 |---|---|---|---|
 | `api_key` | see below | — | One API key, or a list of API keys, created in the MyŠkoda app. When multiple keys are configured, requests are distributed across all of them to combine their rate-limit budgets. |
 | `vins` | ✅ | — | List of VINs (or comma-separated string) the key(s) cover |
-| `interval` | ❌ | `300` | Poll interval in seconds (minimum 300) |
+| `interval` | ❌ | dynamic (see below) | Poll interval in seconds (minimum 300 if set explicitly) |
 | `max_age` | ❌ | `interval - 1` | Maximum cache age in seconds for vehicle data |
 | `max_age_static` | ❌ | `86400` (24 hours) | Maximum cache age in seconds for vehicle images |
 | `netrc` | ❌ | `~/.netrc` | Path to a netrc file containing the API key(s) |
@@ -108,6 +108,25 @@ Requests are distributed evenly across all configured keys. When a key expires (
 `X-API-Key-Expires-At` response header) it is automatically removed from the pool and a warning is
 logged; an info message is logged once a key is within 7 days of expiring. If every configured key
 expires, an error is logged and the connector is marked unhealthy.
+
+### Dynamic poll interval
+
+If `interval` is **not** set in the configuration, the connector automatically derives the poll
+interval from the number of currently active (non-expired) API keys, so that the combined
+rate-limit budget of all keys is used without configuration:
+
+| Active API keys | Poll interval |
+|---|---|
+| 1 | 240 s |
+| 2 | 120 s |
+| 3 | 65 s |
+| 4 | 50 s |
+| 5 (or more) | 40 s |
+
+The interval is re-evaluated whenever a key expires and is removed from the pool, so the connector
+automatically slows down as fewer keys remain available. `max_age` follows the dynamic interval
+(`interval - 1`) unless `max_age` is explicitly configured. Setting `interval` explicitly disables
+this dynamic behaviour and always enforces the 300 s minimum.
 
 ### Credentials
 

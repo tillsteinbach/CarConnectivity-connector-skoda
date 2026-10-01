@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- The charging target state of charge (`target_level`) is now writeable and sent to the API via PUT `/api/v1/vehicles/{vin}/charging/settings`.
+
+### Fixed
+- Parse the new `plugConnectionState` and `plugLockState` fields in `charging.status` (API 1.1.0) to set the charging connector's connection and lock state directly, instead of deriving the connection state from the charging state.
 
 ## [0.13] - 2026-09-04
 ### Changed

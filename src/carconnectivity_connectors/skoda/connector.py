@@ -37,6 +37,8 @@ from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_sko
 from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda._version import __version__
 
+DEFAULT_TARGET_LEVEL_PRECISION: float = 10.0
+
 SUPPORT_IMAGES = False
 SUPPORT_IMAGES_STR: str = ""
 try:
@@ -687,10 +689,12 @@ class Connector(BaseConnector):
         status = charging_data.get('status')
         if status is not None:
             state_str = status.get('state')
+            skoda_state_known: bool = False
             if state_str is not None:
                 # Public API values: CONNECT_CABLE, CHARGING, CONSERVING, READY_FOR_CHARGING, DISCHARGING, CHARGING_INTERRUPTED
                 if state_str in [item.name for item in SkodaCharging.SkodaChargingState]:
                     skoda_state: SkodaCharging.SkodaChargingState = SkodaCharging.SkodaChargingState[state_str]
+                    skoda_state_known = True
                     charging_state: Charging.ChargingState = mapping_skoda_charging_state[skoda_state]
                 else:
                     LOG_API.info('Unknown charging state %s', state_str)
@@ -709,7 +713,7 @@ class Connector(BaseConnector):
                         plug_connection_state = ChargingConnector.ChargingConnectorConnectionState.UNKNOWN
                     vehicle.charging.connector.connection_state._set_value(  # pylint: disable=protected-access
                         value=plug_connection_state, measured=captured_at)
-                elif state_str is not None and state_str in [item.name for item in SkodaCharging.SkodaChargingState]:
+                elif skoda_state_known:
                     # Fall back to deriving connector connection state from charging state if plugConnectionState is unavailable
                     cable_connected_states = {
                         SkodaCharging.SkodaChargingState.CHARGING,
@@ -801,7 +805,7 @@ class Connector(BaseConnector):
             if target_soc is not None and vehicle.charging is not None and vehicle.charging.settings is not None:
                 vehicle.charging.settings.target_level.minimum = 50.0
                 vehicle.charging.settings.target_level.maximum = 100.0
-                vehicle.charging.settings.target_level.precision = 10.0
+                vehicle.charging.settings.target_level.precision = DEFAULT_TARGET_LEVEL_PRECISION
                 vehicle.charging.settings.target_level._set_value(value=target_soc, measured=captured_at)  # pylint: disable=protected-access
                 vehicle.charging.settings.target_level._add_on_set_hook(self.__on_charging_target_level_change)  # pylint: disable=protected-access
                 vehicle.charging.settings.target_level._is_changeable = True  # pylint: disable=protected-access
@@ -1019,7 +1023,7 @@ class Connector(BaseConnector):
         vin: Optional[str] = vehicle.vin.value
         if vin is None:
             raise CommandError('VIN is missing')
-        precision = 10.0
+        precision = DEFAULT_TARGET_LEVEL_PRECISION
         if target_level_attribute.precision is not None:
             precision = target_level_attribute.precision
         rounded_target_level = round(target_level / precision) * precision

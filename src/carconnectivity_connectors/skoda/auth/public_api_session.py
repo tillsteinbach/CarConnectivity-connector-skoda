@@ -140,3 +140,39 @@ class PublicApiSession(requests.Session):
                 raise RetrievalError(f'Action {path} failed ({response.status_code}): {problem_type} — {detail}')
             except (ValueError, KeyError) as parse_err:
                 raise RetrievalError(f'Action {path} failed. Status: {response.status_code}') from parse_err
+
+    def put_action(self, path: str, json_body: Optional[dict] = None) -> None:
+        """
+        PUT a setting change to the public API (e.g. updating the charging target state of charge).
+
+        Args:
+            path (str): Path relative to BASE_URL, e.g. '/api/v1/vehicles/{vin}/charging/settings'.
+            json_body (dict, optional): JSON body for the request.
+
+        Raises:
+            RetrievalError: On connection or HTTP errors.
+            TooManyRequestsError: On rate-limit exceeded (HTTP 429).
+            AuthenticationError: On HTTP 401 / 403.
+        """
+        url = f'{BASE_URL}{path}'
+        try:
+            response = self.put(url, json=json_body, allow_redirects=False)
+        except requests.exceptions.ConnectionError as e:
+            raise RetrievalError(f'Connection error putting to {path}: {e}') from e
+        except requests.exceptions.ReadTimeout as e:
+            raise RetrievalError(f'Timeout putting to {path}: {e}') from e
+
+        if response.status_code in (requests.codes['ok'], requests.codes['accepted'], requests.codes['no_content']):
+            return
+        elif response.status_code == requests.codes['too_many_requests']:
+            raise TooManyRequestsError(f'Rate limit exceeded for API key. Status: {response.status_code}')
+        elif response.status_code in (requests.codes['unauthorized'], requests.codes['forbidden']):
+            raise AuthenticationError(f'API key rejected or expired. Status: {response.status_code}')
+        else:
+            try:
+                problem = response.json()
+                detail = problem.get('detail', '')
+                problem_type = problem.get('type', '')
+                raise RetrievalError(f'Action {path} failed ({response.status_code}): {problem_type} — {detail}')
+            except (ValueError, KeyError) as parse_err:
+                raise RetrievalError(f'Action {path} failed. Status: {response.status_code}') from parse_err

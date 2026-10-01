@@ -37,6 +37,8 @@ from carconnectivity_connectors.skoda.charging import SkodaCharging, mapping_sko
 from carconnectivity_connectors.skoda.climatization import SkodaClimatization
 from carconnectivity_connectors.skoda._version import __version__
 
+DEFAULT_TARGET_LEVEL_PRECISION: float = 10.0
+
 SUPPORT_IMAGES = False
 SUPPORT_IMAGES_STR: str = ""
 try:
@@ -687,34 +689,57 @@ class Connector(BaseConnector):
         status = charging_data.get('status')
         if status is not None:
             state_str = status.get('state')
+            skoda_state_known: bool = False
             if state_str is not None:
                 # Public API values: CONNECT_CABLE, CHARGING, CONSERVING, READY_FOR_CHARGING, DISCHARGING, CHARGING_INTERRUPTED
                 if state_str in [item.name for item in SkodaCharging.SkodaChargingState]:
                     skoda_state: SkodaCharging.SkodaChargingState = SkodaCharging.SkodaChargingState[state_str]
+                    skoda_state_known = True
                     charging_state: Charging.ChargingState = mapping_skoda_charging_state[skoda_state]
                 else:
                     LOG_API.info('Unknown charging state %s', state_str)
                     charging_state = Charging.ChargingState.UNKNOWN
                 vehicle.charging.state._set_value(value=charging_state, measured=captured_at)  # pylint: disable=protected-access
+            else:
+                vehicle.charging.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
 
-                # Derive connector connection state from charging state
-                if vehicle.charging.connector is not None:
-                    # Cable connected when anything other than CONNECT_CABLE (waiting for cable) or DISCHARGING
+            if vehicle.charging.connector is not None:
+                plug_connection_state_str = status.get('plugConnectionState')
+                if plug_connection_state_str is not None:
+                    if plug_connection_state_str in [item.name for item in ChargingConnector.ChargingConnectorConnectionState]:
+                        plug_connection_state = ChargingConnector.ChargingConnectorConnectionState[plug_connection_state_str]
+                    else:
+                        LOG_API.info('Unknown plugConnectionState %s', plug_connection_state_str)
+                        plug_connection_state = ChargingConnector.ChargingConnectorConnectionState.UNKNOWN
+                    vehicle.charging.connector.connection_state._set_value(  # pylint: disable=protected-access
+                        value=plug_connection_state, measured=captured_at)
+                elif skoda_state_known:
+                    # Fall back to deriving connector connection state from charging state if plugConnectionState is unavailable
                     cable_connected_states = {
                         SkodaCharging.SkodaChargingState.CHARGING,
                         SkodaCharging.SkodaChargingState.CONSERVING,
                         SkodaCharging.SkodaChargingState.READY_FOR_CHARGING,
                         SkodaCharging.SkodaChargingState.CHARGING_INTERRUPTED,
                     }
-                    if state_str in [item.name for item in SkodaCharging.SkodaChargingState]:
-                        if skoda_state in cable_connected_states:
-                            vehicle.charging.connector.connection_state._set_value(  # pylint: disable=protected-access
-                                ChargingConnector.ChargingConnectorConnectionState.CONNECTED, measured=captured_at)
-                        else:
-                            vehicle.charging.connector.connection_state._set_value(  # pylint: disable=protected-access
-                                ChargingConnector.ChargingConnectorConnectionState.DISCONNECTED, measured=captured_at)
-            else:
-                vehicle.charging.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    if skoda_state in cable_connected_states:
+                        vehicle.charging.connector.connection_state._set_value(  # pylint: disable=protected-access
+                            ChargingConnector.ChargingConnectorConnectionState.CONNECTED, measured=captured_at)
+                    else:
+                        vehicle.charging.connector.connection_state._set_value(  # pylint: disable=protected-access
+                            ChargingConnector.ChargingConnectorConnectionState.DISCONNECTED, measured=captured_at)
+                else:
+                    vehicle.charging.connector.connection_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+
+                plug_lock_state_str = status.get('plugLockState')
+                if plug_lock_state_str is not None:
+                    if plug_lock_state_str in [item.name for item in ChargingConnector.ChargingConnectorLockState]:
+                        plug_lock_state = ChargingConnector.ChargingConnectorLockState[plug_lock_state_str]
+                    else:
+                        LOG_API.info('Unknown plugLockState %s', plug_lock_state_str)
+                        plug_lock_state = ChargingConnector.ChargingConnectorLockState.UNKNOWN
+                    vehicle.charging.connector.lock_state._set_value(value=plug_lock_state, measured=captured_at)  # pylint: disable=protected-access
+                else:
+                    vehicle.charging.connector.lock_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
 
             rate = status.get('chargingRateInKilometersPerHour')
             if rate is not None:
@@ -771,7 +796,8 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'charging.status.battery', battery, {'remainingCruisingRangeInMeters', 'stateOfChargeInPercent'})
                         break
             log_extra_keys(LOG_API, 'charging.status', status, {'chargingRateInKilometersPerHour', 'chargePowerInKw',
-                                                                 'remainingTimeToFullyChargedInMinutes', 'fullyChargedAt', 'state', 'chargeType', 'battery'})
+                                                                 'remainingTimeToFullyChargedInMinutes', 'fullyChargedAt', 'state', 'chargeType', 'battery',
+                                                                 'plugConnectionState', 'plugLockState'})
 
         settings = charging_data.get('settings')
         if settings is not None:
@@ -779,8 +805,10 @@ class Connector(BaseConnector):
             if target_soc is not None and vehicle.charging is not None and vehicle.charging.settings is not None:
                 vehicle.charging.settings.target_level.minimum = 50.0
                 vehicle.charging.settings.target_level.maximum = 100.0
-                vehicle.charging.settings.target_level.precision = 10.0
+                vehicle.charging.settings.target_level.precision = DEFAULT_TARGET_LEVEL_PRECISION
                 vehicle.charging.settings.target_level._set_value(value=target_soc, measured=captured_at)  # pylint: disable=protected-access
+                vehicle.charging.settings.target_level._add_on_set_hook(self.__on_charging_target_level_change)  # pylint: disable=protected-access
+                vehicle.charging.settings.target_level._is_changeable = True  # pylint: disable=protected-access
             else:
                 vehicle.charging.settings.target_level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
 
@@ -986,6 +1014,21 @@ class Connector(BaseConnector):
                 pass  # Ignore stop failures; proceed to start with new temperature
         self.session.post_action(f'/api/v1/vehicles/{vin}/air-conditioning/start', json_body=body)
         return target_temperature
+
+    def __on_charging_target_level_change(self, target_level_attribute: LevelAttribute, target_level: float) -> float:
+        if target_level_attribute.parent is None or target_level_attribute.parent.parent is None \
+                or target_level_attribute.parent.parent.parent is None or not isinstance(target_level_attribute.parent.parent.parent, SkodaVehicle):
+            raise CommandError('Object hierarchy is not as expected')
+        vehicle: SkodaVehicle = target_level_attribute.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise CommandError('VIN is missing')
+        precision = DEFAULT_TARGET_LEVEL_PRECISION
+        if target_level_attribute.precision is not None:
+            precision = target_level_attribute.precision
+        body = {'targetStateOfChargeInPercent': int(round(target_level / precision) * precision)}
+        self.session.put_action(f'/api/v1/vehicles/{vin}/charging/settings', json_body=body)
+        return target_level
 
     def __on_air_conditioning_start_stop(self, start_stop_command: ClimatizationStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
             -> Union[str, Dict[str, Any]]:

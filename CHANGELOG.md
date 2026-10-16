@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-10-16
+### Fixed
+- Fixed issue with writable attributes not being enabled correctly.
+
 ## [0.13.1] - 2026-09-01
 ### Added
 - The charging target state of charge (`target_level`) is now writeable and sent to the API via PUT `/api/v1/vehicles/{vin}/charging/settings`.
@@ -199,7 +203,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely but most functions already work
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.13.1...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.13.2
 [0.13.1]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.13.1
 [0.13]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.13
 [0.12.6]: https://github.com/tillsteinbach/CarConnectivity-connector-skoda/releases/tag/v0.12.6

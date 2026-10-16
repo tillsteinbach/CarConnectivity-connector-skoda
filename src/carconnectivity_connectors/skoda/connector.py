@@ -801,6 +801,10 @@ class Connector(BaseConnector):
 
         settings = charging_data.get('settings')
         if settings is not None:
+            # Convert to SkodaCharging before configuring attributes, as the conversion replaces the settings objects (and would drop hooks)
+            if not isinstance(vehicle.charging, SkodaCharging) and any(key in settings for key in ('preferredChargeMode', 'availableChargeModes',
+                                                                                                    'chargingCareMode')):
+                vehicle.charging = SkodaCharging(origin=vehicle.charging)
             target_soc = settings.get('targetStateOfChargeInPercent')
             if target_soc is not None and vehicle.charging is not None and vehicle.charging.settings is not None:
                 vehicle.charging.settings.target_level.minimum = 50.0

@@ -810,9 +810,9 @@ class Connector(BaseConnector):
                 vehicle.charging.settings.target_level.minimum = 50.0
                 vehicle.charging.settings.target_level.maximum = 100.0
                 vehicle.charging.settings.target_level.precision = DEFAULT_TARGET_LEVEL_PRECISION
+                vehicle.charging.settings.target_level._is_changeable = True  # pylint: disable=protected-access
                 vehicle.charging.settings.target_level._set_value(value=target_soc, measured=captured_at)  # pylint: disable=protected-access
                 vehicle.charging.settings.target_level._add_on_set_hook(self.__on_charging_target_level_change)  # pylint: disable=protected-access
-                vehicle.charging.settings.target_level._is_changeable = True  # pylint: disable=protected-access
             else:
                 vehicle.charging.settings.target_level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
 
@@ -937,12 +937,12 @@ class Connector(BaseConnector):
             if temp_value is not None:
                 unit_map = {'CELSIUS': Temperature.C, 'FAHRENHEIT': Temperature.F}
                 temp_unit = unit_map.get(temp_unit_str, Temperature.C)
+                vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
                 vehicle.climatization.settings.target_temperature._set_value(  # pylint: disable=protected-access
                     value=temp_value, measured=captured_at, unit=temp_unit)
                 vehicle.climatization.settings.target_temperature.precision = 0.5
                 vehicle.climatization.settings.target_temperature._add_on_set_hook(  # pylint: disable=protected-access
                     self.__on_air_conditioning_target_temperature_change)
-                vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
             log_extra_keys(LOG_API, 'airConditioning.targetTemperature', target_temp, {'value', 'unit'})
 
         ac_without_power = ac_data.get('airConditioningWithoutExternalPower')

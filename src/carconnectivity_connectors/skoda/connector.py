@@ -991,7 +991,7 @@ class Connector(BaseConnector):
 
     def _run_action(self, method: str, path: str, **kwargs: Any) -> Any:
         """Run a command/setting request against the API, logging the attempt and any failure."""
-        LOG.info('Trying %s %s%s', method.upper(), path, f' with body {kwargs["json_body"]}' if kwargs.get('json_body') is not None else '')
+        LOG.debug('Trying %s %s%s', method.upper(), path, f' with body {kwargs["json_body"]}' if kwargs.get('json_body') is not None else '')
         func = self.session.post_action if method == 'post' else self.session.put_action
         try:
             result = func(path, **kwargs)

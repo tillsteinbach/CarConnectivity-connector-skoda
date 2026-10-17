@@ -1,0 +1,1819 @@
+openapi: 3.0.3
+info:
+  title: MyŠkoda Public API
+  description: |
+    Public API for reading connected-vehicle data and remotely controlling Škoda vehicles. It
+    enables third-party integrations, for example with smart-home platforms such as Home Assistant.
+
+    Changes between released versions are listed in the
+    [changelog](https://public.api.connect.skoda-auto.cz/docs/changelog).
+  version: 1.1.0
+servers:
+- url: https://public.api.connect.skoda-auto.cz
+tags:
+- name: Vehicles
+  description: Vehicle data API
+- name: Charging
+  description: Vehicle charging API
+- name: AirConditioning
+  description: Vehicle air conditioning API
+paths:
+  /api/v1/vehicles/{vin}:
+    get:
+      tags:
+      - Vehicles
+      summary: Returns the vehicle and its current state.
+      description: 'The endpoint delivers the vehicle together with its current state: status (doors,
+        windows, lights), fuel status, odometer, air conditioning (including auxiliary heating
+        and active ventilation), charging, charging profiles (saved charging locations), parking
+        position and the remote operations the vehicle supports.
+        The response can be limited to selected parts of the data using the `include` query
+        parameter.'
+      operationId: getVehicle
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      - name: include
+        in: query
+        description: |
+          Limits the response to the selected parts of the vehicle data, as a comma-separated list.
+          Each value corresponds to the part of the response with the same name, except `info`
+          which covers the basic vehicle information (`name`, `licensePlate` and `renderUrl`).
+          The `vin` is always returned, regardless of this parameter.
+
+          When the parameter is omitted, all parts supported by the vehicle are returned. Parts the
+          vehicle does not support are simply absent in that case - `*_UNSUPPORTED` errors are only
+          reported for parts explicitly requested via this parameter. Unknown values are rejected
+          with a `400 Bad Request` response.
+
+          A part that is not included is absent from the response. Note that an included part may
+          also be absent when its data could not be retrieved - in that case the response contains
+          a corresponding error in the `errors` list.
+        required: false
+        explode: false
+        schema:
+          type: array
+          items:
+            $ref: '#/components/schemas/VehiclePart'
+        example:
+        - status
+        - charging
+      responses:
+        '200':
+          description: The vehicle and its current state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleResponse'
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/charging/start:
+    post:
+      tags:
+      - Charging
+      summary: Start charging for a given vehicle.
+      operationId: startCharging
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      responses:
+        '202':
+          description: Request to start charging was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/charging/stop:
+    post:
+      tags:
+      - Charging
+      summary: Stop charging for a given vehicle.
+      operationId: stopCharging
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      responses:
+        '202':
+          description: Request to stop charging was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/charging/limit:
+    put:
+      tags:
+      - Charging
+      summary: Sets the charging limit for a given vehicle.
+      operationId: setChargingLimit
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargingLimit'
+        required: true
+      responses:
+        '202':
+          description: Request to set the charging limit was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/charging/mode:
+    put:
+      tags:
+      - Charging
+      summary: Change the charge mode for a given vehicle.
+      operationId: setChargeMode
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargeMode'
+        required: true
+      responses:
+        '202':
+          description: Request to change the charge mode was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/charging-profiles/{id}:
+    put:
+      tags:
+      - Charging
+      summary: Updates a charging profile of a given vehicle.
+      description: The vehicle applies the submitted profile as a whole, so send the complete
+        profile - e.g. as returned by `GET /api/v1/vehicles/{vin}?include=chargingProfiles` - with
+        the desired fields changed. A `404` is returned when either the vehicle or its charging
+        profile with the given id is unknown.
+      operationId: updateChargingProfile
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      - $ref: '#/components/parameters/ChargingProfileIdPathParameter'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargingProfile'
+        required: true
+      responses:
+        '202':
+          description: Request to update the charging profile was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '412':
+          $ref: '#/components/responses/412PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/air-conditioning/start:
+    post:
+      tags:
+      - AirConditioning
+      summary: Starts an air-conditioning process inside a vehicle to reach the target temperature.
+      operationId: startAirConditioning
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAirConditioningConfiguration'
+        required: true
+      responses:
+        '202':
+          description: Request to start air conditioning was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/air-conditioning/stop:
+    post:
+      tags:
+      - AirConditioning
+      summary: Stops an air-conditioning process inside a vehicle.
+      operationId: stopAirConditioning
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      responses:
+        '202':
+          description: Request to stop air conditioning was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/auxiliary-heating/start:
+    post:
+      tags:
+      - AirConditioning
+      summary: Start auxiliary heating inside the desired vehicle.
+      operationId: startAuxiliaryHeating
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAuxiliaryHeatingConfiguration'
+        required: true
+      responses:
+        '202':
+          description: Request to start auxiliary heating was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/auxiliary-heating/stop:
+    post:
+      tags:
+      - AirConditioning
+      summary: Stop auxiliary heating inside the desired vehicle.
+      operationId: stopAuxiliaryHeating
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      responses:
+        '202':
+          description: Request to stop auxiliary heating was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/active-ventilation/start:
+    post:
+      tags:
+      - AirConditioning
+      summary: Start active ventilation inside the desired vehicle.
+      operationId: startActiveVentilation
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      responses:
+        '202':
+          description: Request to start active ventilation was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+  /api/v1/vehicles/{vin}/active-ventilation/stop:
+    post:
+      tags:
+      - AirConditioning
+      summary: Stop active ventilation inside the desired vehicle.
+      operationId: stopActiveVentilation
+      parameters:
+      - $ref: '#/components/parameters/VinPathParameter'
+      responses:
+        '202':
+          description: Request to stop active ventilation was performed.
+          headers:
+            X-API-Key-Expires-At:
+              $ref: '#/components/headers/ApiKeyExpiresAt'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403OperationForbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422OperationNotPossible'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+        '503':
+          $ref: '#/components/responses/503ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/504GatewayTimeout'
+      security:
+      - apiKeyAuth: []
+components:
+  schemas:
+    VehiclePart:
+      type: string
+      description: A part of the vehicle data that can be requested via the `include` query parameter.
+      enum:
+      - info
+      - status
+      - fuelStatus
+      - odometer
+      - parkingPosition
+      - airConditioning
+      - auxiliaryHeating
+      - activeVentilation
+      - charging
+      - chargingProfiles
+      - operations
+    VehicleResponse:
+      type: object
+      description: The vehicle with all available data, and a summary of errors that occurred while the data was gathered.
+      properties:
+        vehicle:
+          $ref: '#/components/schemas/Vehicle'
+        errors:
+          type: array
+          description: Errors encountered while gathering the vehicle data. The response combines
+            data from multiple sources; if some of them fail, the response contains partial data and
+            the affected parts are omitted, each described by an error in this list. Parts that the
+            vehicle does not support, or that it supports but are currently disabled, are reported
+            the same way.
+          items:
+            $ref: '#/components/schemas/VehicleError'
+      required:
+      - vehicle
+    Vehicle:
+      type: object
+      description: The vehicle and its current state.
+      properties:
+        vin:
+          type: string
+          description: Vehicle Identification Number.
+          minLength: 17
+          maxLength: 17
+          example: TMBJB9NY5RF999999
+        name:
+          type: string
+          description: User-defined vehicle name. When the user has not named the vehicle, the model name (e.g. `Enyaq`) is returned instead.
+          example: My Enyaq
+        licensePlate:
+          type: string
+          example: 1MB 1234
+        renderUrl:
+          type: string
+          format: uri
+          example: https://www.example.com/render
+        status:
+          $ref: '#/components/schemas/VehicleStatus'
+        fuelStatus:
+          $ref: '#/components/schemas/FuelStatus'
+        odometer:
+          $ref: '#/components/schemas/Odometer'
+        parkingPosition:
+          $ref: '#/components/schemas/ParkingPosition'
+        airConditioning:
+          $ref: '#/components/schemas/AirConditioning'
+        auxiliaryHeating:
+          $ref: '#/components/schemas/AuxiliaryHeating'
+        activeVentilation:
+          $ref: '#/components/schemas/ActiveVentilation'
+        charging:
+          $ref: '#/components/schemas/Charging'
+        chargingProfiles:
+          $ref: '#/components/schemas/ChargingProfiles'
+        operations:
+          type: array
+          description: |
+            Remote operations the vehicle supports, derived from the vehicle's capabilities. An
+            operation is listed when the vehicle supports it; it may still be temporarily rejected
+            when executed (e.g. while the vehicle is in workshop mode). When the supported
+            operations could not be determined, `operations` is omitted and `errors` contains
+            `OPERATIONS_UNAVAILABLE`.
+          items:
+            $ref: '#/components/schemas/VehicleOperation'
+    VehicleStatus:
+      type: object
+      description: |
+        Current status of the vehicle's doors, windows and lights - an aggregated `overall` view
+        plus per-part `detail`. When explicitly requested (via `include`) for a vehicle that does
+        not support it, `status` is omitted and `errors` contains `VEHICLE_STATUS_UNSUPPORTED`.
+        Likewise, a supported but currently disabled vehicle status is reported via
+        `VEHICLE_STATUS_DISABLED`, and a status that could not be retrieved via
+        `VEHICLE_STATUS_UNAVAILABLE`.
+      properties:
+        overall:
+          $ref: '#/components/schemas/OverallVehicleStatus'
+        detail:
+          $ref: '#/components/schemas/VehicleStatusDetail'
+        carCapturedTimestamp:
+          $ref: '#/components/schemas/CarCapturedTimestamp'
+      required:
+      - overall
+      - detail
+    OverallVehicleStatus:
+      type: object
+      properties:
+        doorsLocked:
+          type: string
+          description: |
+            Overall doors and trunk lock state. Possible values are:
+              * YES - all supported doors AND trunk are LOCKED+CLOSED.
+              * NO - at least one supported door OR trunk is UNLOCKED but CLOSED.
+              * OPENED - at least one supported door OR bonnet is OPEN.
+              * TRUNK_OPENED - trunk is OPEN but all supported doors AND trunk are CLOSED.
+              * UNKNOWN - system cannot recognise correct value.
+          example: 'YES'
+        locked:
+          type: string
+          description: |
+            Possible values are:
+              * YES - at least one door is supported AND all supported doors and trunk are LOCKED+CLOSED.
+              * NO - any supported door is UNLOCKED/OPEN and no door is UNKNOWN.
+              * UNKNOWN - system cannot recognise correct value.
+          example: 'YES'
+        doors:
+          type: string
+          description: |
+            Possible values are:
+              * OPEN - any supported door is OPEN.
+              * CLOSED - at least one door is supported AND all supported doors are CLOSED.
+              * UNKNOWN - system cannot recognise correct value.
+          example: OPEN
+        windows:
+          type: string
+          description: |
+            Aggregated over the side windows; the sunroof is excluded and reported separately in
+            `detail`. Possible values are:
+              * OPEN - any supported side window is OPEN.
+              * CLOSED - at least one window is supported AND all supported windows are CLOSED.
+              * UNKNOWN - system cannot recognise correct value.
+              * UNSUPPORTED - vehicle does not have all electric windows.
+          example: OPEN
+        lights:
+          type: string
+          description: |
+            Possible values are:
+              * ON - at least one supported light is ON.
+              * OFF - all supported lights are OFF.
+              * UNKNOWN - system cannot recognise correct value.
+          example: 'ON'
+        reliableLockStatus:
+          type: string
+          description: |
+            Provides information if vehicle is locked. Unlocked value is returned only for MOD4 vehicles. Possible values are:
+              * LOCKED - all supported doors AND trunk are LOCKED+CLOSED.
+              * UNLOCKED - any supported door is UNLOCKED/OPEN and no door is UNKNOWN.
+              * UNKNOWN - system cannot recognise correct value.
+          example: LOCKED
+      required:
+      - doorsLocked
+      - locked
+      - doors
+      - windows
+      - lights
+    VehicleStatusDetail:
+      type: object
+      properties:
+        sunroof:
+          type: string
+          description: Possible value is OPEN, CLOSED, UNKNOWN or UNSUPPORTED.
+          example: OPEN
+        trunk:
+          type: string
+          description: Possible value is OPEN, CLOSED, UNKNOWN.
+          example: OPEN
+        bonnet:
+          type: string
+          description: Possible value is OPEN, CLOSED, UNKNOWN.
+          example: OPEN
+      required:
+      - sunroof
+      - trunk
+      - bonnet
+    Odometer:
+      type: object
+      description: |
+        Current odometer reading of the vehicle. When explicitly requested (via `include`) for a
+        vehicle that does not support it, `odometer` is omitted and `errors` contains
+        `ODOMETER_UNSUPPORTED`. Likewise, a supported but currently disabled odometer reading is
+        reported via `ODOMETER_DISABLED`, and a reading that could not be retrieved via
+        `ODOMETER_UNAVAILABLE`.
+      properties:
+        mileageInKm:
+          type: integer
+          format: int64
+          description: Current mileage of the vehicle in kilometers.
+          example: 12753
+        carCapturedTimestamp:
+          $ref: '#/components/schemas/CarCapturedTimestamp'
+      required:
+        - mileageInKm
+    FuelStatus:
+      type: object
+      description: |
+        Fuel status and driving range of the vehicle. Returned only for vehicles with a combustion
+        engine, including hybrids. Battery-electric vehicles do not report fuel status - their range
+        and state of charge are part of `charging`. When explicitly requested (via `include`) for a
+        vehicle that does not support it, `fuelStatus` is omitted and `errors` contains
+        `FUEL_STATUS_UNSUPPORTED`. Likewise, a supported but currently disabled fuel status is
+        reported via `FUEL_STATUS_DISABLED`.
+      properties:
+        carType:
+          type: string
+          description: |
+            Vehicle's type. Possible values are `HYBRID`, `GASOLINE`, `DIESEL`, `CNG`, `LPG` and
+            `UNKNOWN`. New values may be added over time, so clients must tolerate values they do
+            not recognize.
+          example: GASOLINE
+        adBlueRange:
+          type: number
+          description: Vehicle's adBlue range in kilometers. Available only for vehicles with
+            diesel engine.
+          example: 1520
+        totalRangeInKm:
+          type: number
+          description: Vehicle's total range in kilometers.
+          example: 520
+        primaryEngineRange:
+          $ref: '#/components/schemas/EngineRange'
+        secondaryEngineRange:
+          $ref: '#/components/schemas/EngineRange'
+        carCapturedTimestamp:
+          $ref: '#/components/schemas/CarCapturedTimestamp'
+    EngineRange:
+      type: object
+      description: Details of the vehicle's engine range.
+      properties:
+        engineType:
+          type: string
+          description: |
+            Vehicle's engine type. Possible values are `ELECTRIC`, `GASOLINE`, `DIESEL`, `CNG`,
+            `LPG` and `UNKNOWN`. New values may be added over time, so clients must tolerate
+            values they do not recognize.
+          example: GASOLINE
+        currentSoCInPercent:
+          type: number
+          description: Vehicle's State of Charge in percent.
+          example: 100
+        currentFuelLevelInPercent:
+          type: number
+          description: Vehicle's fuel level in percent.
+          example: 87
+        remainingRangeInKm:
+          type: number
+          description: Vehicle's remaining range in kilometers.
+          example: 350
+    AirConditioning:
+      type: object
+      description: Information about the vehicle's air conditioning.
+      properties:
+        state:
+          type: string
+          description: |
+            State of the air conditioning. Possible values are:
+              * OFF
+              * COOLING
+              * HEATING
+              * HEATING_AUXILIARY - the auxiliary heater is assisting with heating the cabin
+              * VENTILATION
+              * COMPLETED
+              * UNKNOWN - system cannot recognise correct value
+              * UNSUPPORTED - the vehicle does not report this state
+          example: HEATING
+        targetTemperature:
+          $ref: '#/components/schemas/TargetTemperature'
+        estimatedReachOfTargetTemperatureAt:
+          type: string
+          format: date-time
+          description: Timestamp when the cabin is expected to reach the target temperature.
+            Standard ISO 8601 format.
+          example: '2026-06-12T07:30:00Z'
+        airConditioningWithoutExternalPower:
+          type: boolean
+          description: Setting indicating whether the air conditioning may run without the vehicle
+            being connected to an external power source.
+          example: true
+        airConditioningAtUnlock:
+          type: boolean
+          description: Setting indicating whether the air conditioning starts automatically when
+            the vehicle is unlocked.
+          example: false
+        windowHeating:
+          $ref: '#/components/schemas/WindowHeating'
+        carCapturedTimestamp:
+          $ref: '#/components/schemas/CarCapturedTimestamp'
+      required:
+      - state
+    AuxiliaryHeating:
+      type: object
+      description: Information about the vehicle's auxiliary (fuel-operated or electric) heater.
+      properties:
+        state:
+          type: string
+          description: |
+            State of the auxiliary heating. Possible values are:
+              * OFF
+              * PREHEATING
+              * HEATING_AUXILIARY
+              * VENTILATION
+              * UNKNOWN - system cannot recognise correct value
+              * UNSUPPORTED - the vehicle does not report this state
+          example: HEATING_AUXILIARY
+        startMode:
+          type: string
+          description: |
+            Mode the auxiliary heating starts in. Possible values are:
+              * HEATING
+              * VENTILATION
+          example: HEATING
+        durationInSeconds:
+          type: integer
+          format: int32
+          description: Duration in seconds the auxiliary heating runs for when started.
+          example: 600
+        targetTemperature:
+          $ref: '#/components/schemas/TargetTemperature'
+        estimatedReachOfTargetTemperatureAt:
+          type: string
+          format: date-time
+          description: Timestamp when the cabin is expected to reach the target temperature.
+            Standard ISO 8601 format.
+          example: '2026-06-12T07:30:00Z'
+        carCapturedTimestamp:
+          $ref: '#/components/schemas/CarCapturedTimestamp'
+      required:
+      - state
+    ActiveVentilation:
+      type: object
+      description: Information about the vehicle's active ventilation.
+      properties:
+        state:
+          type: string
+          description: |
+            State of the active ventilation. Possible values are:
+              * OFF
+              * PREHEATING
+              * VENTILATION
+              * UNKNOWN - system cannot recognise correct value
+              * UNSUPPORTED - the vehicle does not report this state
+          example: VENTILATION
+        durationInSeconds:
+          type: integer
+          format: int32
+          description: Duration in seconds the active ventilation runs for when started.
+          example: 600
+        carCapturedTimestamp:
+          $ref: '#/components/schemas/CarCapturedTimestamp'
+      required:
+      - state
+    TargetTemperature:
+      type: object
+      description: Target cabin temperature.
+      properties:
+        value:
+          type: number
+          format: double
+          description: Target temperature value, in the unit given by `unit`.
+          example: 22.5
+        unit:
+          type: string
+          description: |
+            Temperature unit. Possible values are:
+              * CELSIUS
+              * FAHRENHEIT
+          example: CELSIUS
+      required:
+      - value
+      - unit
+    WindowHeating:
+      type: object
+      description: State of the electric window heating.
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            True if window heating is enabled for the vehicle.
+            Absent when the vehicle did not report its climatisation settings.
+          example: true
+        front:
+          type: string
+          description: |
+            State of the front window heating. Possible values are:
+              * ON
+              * OFF
+              * UNKNOWN - system cannot recognise correct value
+              * UNSUPPORTED - vehicle does not support front window heating
+          example: 'ON'
+        rear:
+          type: string
+          description: |
+            State of the rear window heating. Possible values are:
+              * ON
+              * OFF
+              * UNKNOWN - system cannot recognise correct value
+              * UNSUPPORTED - vehicle does not support rear window heating
+          example: 'OFF'
+    StartAirConditioningConfiguration:
+      type: object
+      description: Configuration for starting the air conditioning of the vehicle.
+      properties:
+        targetTemperature:
+          $ref: '#/components/schemas/TargetTemperature'
+        airConditioningWithoutExternalPower:
+          type: boolean
+          description: Allow or forbid air conditioning when no external power connection is available.
+          example: true
+    StartAuxiliaryHeatingConfiguration:
+      type: object
+      description: Configuration with details needed for starting auxiliary heating.
+      properties:
+        targetTemperature:
+          $ref: '#/components/schemas/TargetTemperature'
+        spin:
+          type: string
+          description: Security PIN code.
+          example: '1234'
+        durationInSeconds:
+          type: integer
+          format: int32
+          description: Duration in seconds the auxiliary heating runs for.
+          example: 120
+        startMode:
+          type: string
+          description: |
+            Start mode of the auxiliary heating device. Possible values are:
+              * HEATING
+              * VENTILATION
+          example: HEATING
+      required:
+      - spin
+    Charging:
+      type: object
+      description: |
+        Charging and battery status of the vehicle. Returned only for vehicles that support
+        charging - battery-electric vehicles and plug-in hybrids. Vehicles without a high-voltage
+        battery do not report charging. When explicitly requested (via `include`) for a vehicle
+        that does not support it, `charging` is omitted and `errors` contains
+        `CHARGING_UNSUPPORTED`. Likewise, a supported but currently disabled charging service is
+        reported via `CHARGING_DISABLED`.
+      properties:
+        isVehicleInSavedLocation:
+          type: boolean
+          description: Indicates whether the vehicle is in a saved location (a specific location with defined charging settings).
+          default: false
+          example: true
+        status:
+          $ref: '#/components/schemas/ChargingStatus'
+        settings:
+          $ref: '#/components/schemas/ChargingSettings'
+        carCapturedTimestamp:
+          $ref: '#/components/schemas/CarCapturedTimestamp'
+      required:
+      - isVehicleInSavedLocation
+    ChargingStatus:
+      type: object
+      description: Charging status information.
+      properties:
+        chargingRateInKilometersPerHour:
+          type: number
+          format: double
+          description: Rate of charging in kilometers per hour.
+          example: 20.16960863831928
+        chargePowerInKw:
+          type: number
+          format: double
+          description: Charge power in kilowatts.
+          example: 20.16960863831928
+        remainingTimeToFullyChargedInMinutes:
+          type: integer
+          format: int32
+          description: Remaining charging time to complete in minutes.
+          example: 15
+        fullyChargedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the vehicle is expected to be fully charged
+        state:
+          type: string
+          description: |
+            Charging state, derived from the charging process state and the plug state the vehicle
+            reports, using the same rules as the MyŠkoda app. Possible values are:
+              * CONNECT_CABLE
+              * CHARGING
+              * CONSERVING
+              * READY_FOR_CHARGING
+              * DISCHARGING
+              * CHARGING_INTERRUPTED
+            New values may be added over time, so clients must tolerate values they do not
+            recognize.
+
+            The field is omitted when the reported combination has no published name. This happens
+            in everyday situations, for example when the cable is plugged in and unlocked while no
+            charging process runs, or when the vehicle reports its charging status as invalid, for
+            example shortly after a drive. No entry is added to the `errors` list in that case.
+            An omitted state never means the plug was reported as disconnected - a disconnected plug
+            is always reported as `CONNECT_CABLE`. Read `plugConnectionState` to tell whether the
+            cable is plugged in, and treat an omitted state as unknown rather than as any specific
+            state.
+          example: READY_FOR_CHARGING
+        chargeType:
+          type: string
+          description: |
+            Type of charging. Possible values are:
+              * AC
+              * DC
+              * OFF
+            New values may be added over time, so clients must tolerate values they do not
+            recognize.
+          example: DC
+        plugConnectionState:
+          type: string
+          description: |
+            Connection state of the charging cable plugs, as the vehicle reports it. Possible values
+            are:
+              * CONNECTED
+              * DISCONNECTED
+            New values may be added over time, so clients must tolerate values they do not
+            recognize. The field is omitted when the vehicle reports no usable value.
+          example: CONNECTED
+        plugLockState:
+          type: string
+          description: |
+            Lock state of the charging cable plugs, as the vehicle reports it. Possible values are:
+              * LOCKED
+              * UNLOCKED
+            New values may be added over time, so clients must tolerate values they do not
+            recognize. The field is omitted when the vehicle reports no usable value.
+          example: LOCKED
+        battery:
+          $ref: '#/components/schemas/BatteryStatus'
+    BatteryStatus:
+      type: object
+      description: Battery status information.
+      properties:
+        remainingCruisingRangeInMeters:
+          type: integer
+          description: Remaining cruising range with HV battery power in meters.
+          example: 249
+        stateOfChargeInPercent:
+          type: integer
+          description: State of charge in percent.
+          example: 71
+    ChargingSettings:
+      type: object
+      description: Information about charging settings.
+      properties:
+        targetStateOfChargeInPercent:
+          type: integer
+          description: Target state of charge in percent.
+          example: 80
+        batteryCareModeTargetValueInPercent:
+          type: integer
+          description: Recommended target state of charge in percent when battery care mode is
+            enabled.
+          minimum: 1
+          maximum: 100
+          example: 80
+        preferredChargeMode:
+          type: string
+          description: |
+            Preferred charging mode. Possible values are:
+              * MANUAL
+              * TIMER
+              * TIMER_CHARGING_WITH_CLIMATISATION
+              * PREFERRED_CHARGING_TIMES
+              * ONLY_OWN_CURRENT
+              * IMMEDIATE_DISCHARGING
+              * HOME_STORAGE_CHARGING
+            New values may be added over time, so clients must tolerate values they do not
+            recognize.
+          example: MANUAL
+        availableChargeModes:
+          type: array
+          description: |
+            List of available charging modes. Possible values are:
+              * MANUAL
+              * TIMER
+              * TIMER_CHARGING_WITH_CLIMATISATION
+              * PREFERRED_CHARGING_TIMES
+              * ONLY_OWN_CURRENT
+              * IMMEDIATE_DISCHARGING
+              * HOME_STORAGE_CHARGING
+            New values may be added over time, so clients must tolerate values they do not
+            recognize.
+          items:
+            type: string
+            description: Available charging mode.
+            example: MANUAL
+        chargingCareMode:
+          type: string
+          description: |
+            Indicates whether is charging care mode activated. Possible values are:
+              * ACTIVATED
+              * DEACTIVATED
+            New values may be added over time, so clients must tolerate values they do not
+            recognize.
+          example: ACTIVATED
+        autoUnlockPlugWhenCharged:
+          type: string
+          description: |
+            Value for auto unlock plug, when charging is finished. Possible values are:
+              * PERMANENT
+              * OFF
+            New values may be added over time, so clients must tolerate values they do not
+            recognize.
+          example: PERMANENT
+        maxChargeCurrentAc:
+          type: string
+          description: |
+            Value that should be used when start charging. Possible values are:
+              * REDUCED
+              * MAXIMUM
+            New values may be added over time, so clients must tolerate values they do not
+            recognize.
+          example: MAXIMUM
+        maxChargeCurrentAcAmpere:
+          type: integer
+          minimum: 5
+          maximum: 32
+          description: Maximum charging current limit in ampere. Can acquire values 5, 10, 13 or 32.
+          example: 10
+    ChargingLimit:
+      type: object
+      description: Charging limit to set for the vehicle.
+      properties:
+        targetStateOfChargeInPercent:
+          type: integer
+          format: int32
+          description: |
+            Target state of charge in percent. Vehicles typically accept values between 50 and 100
+            in steps of 10 and reject other values.
+          minimum: 1
+          maximum: 100
+          example: 80
+      required:
+      - targetStateOfChargeInPercent
+    ChargeMode:
+      type: object
+      description: Charge mode to set for the vehicle.
+      properties:
+        chargeMode:
+          type: string
+          description: |
+            Charge mode. Possible values are:
+              * MANUAL
+              * TIMER
+              * TIMER_CHARGING_WITH_CLIMATISATION
+              * PREFERRED_CHARGING_TIMES
+              * ONLY_OWN_CURRENT
+              * IMMEDIATE_DISCHARGING
+              * HOME_STORAGE_CHARGING
+          example: MANUAL
+      required:
+      - chargeMode
+    ChargingProfiles:
+      type: object
+      description: |
+        Charging profiles (saved charging locations) defined for the vehicle. When explicitly
+        requested (via `include`) for a vehicle that does not support them, `chargingProfiles` is
+        omitted and `errors` contains `CHARGING_PROFILES_UNSUPPORTED`. Likewise, supported but
+        currently disabled charging profiles are reported via `CHARGING_PROFILES_DISABLED`, and
+        profiles that could not be retrieved via `CHARGING_PROFILES_UNAVAILABLE`.
+      properties:
+        profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChargingProfile'
+        currentVehiclePositionProfile:
+          $ref: '#/components/schemas/CurrentVehiclePositionProfile'
+        carCapturedTimestamp:
+          $ref: '#/components/schemas/CarCapturedTimestamp'
+      required:
+      - profiles
+    ChargingProfile:
+      type: object
+      description: Information about a charging profile.
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Identifier of this profile.
+          example: 123456
+        name:
+          type: string
+          description: The name of the charging profile as specified by the user.
+          example: charging profile 1
+        settings:
+          $ref: '#/components/schemas/ChargingProfileSettings'
+        preferredChargingTimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChargingTime'
+        timers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Timer'
+      required:
+      - id
+      - name
+      - preferredChargingTimes
+      - timers
+      - settings
+    CurrentVehiclePositionProfile:
+      type: object
+      description: Information about the profile where the vehicle is currently located. Only
+        returned if the vehicle is positioned in any profile.
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Identifier of profile.
+          example: 123456
+        name:
+          type: string
+          description: The name of the charging profile as specified by the user.
+          example: HOME
+        targetStateOfChargeInPercent:
+          type: integer
+          format: int32
+          description: Target charging level in percent set by user for this profile.
+          example: 80
+        nextChargingTime:
+          type: string
+          description: Specifies next charging time which will be triggered at current profile.
+            Time is in vehicle local in ISO 8601 format (HH:mm).
+          example: '12:34'
+      required:
+      - id
+      - name
+    ChargingProfileSettings:
+      type: object
+      description: Charging profile settings.
+      properties:
+        maxChargingCurrent:
+          type: string
+          description: |
+            Value that should be used when start charging. Possible values are:
+              * REDUCED
+              * MAXIMUM
+          example: MAXIMUM
+        minBatteryStateOfCharge:
+          $ref: '#/components/schemas/MinBatteryStateOfCharge'
+        targetStateOfChargeInPercent:
+          type: integer
+          format: int32
+          description: Target charging level in percent set by user.
+          example: 80
+        autoUnlockPlugWhenCharged:
+          type: string
+          description: |
+            Value for auto unlock plug, when charging is finished. Possible values are:
+              * PERMANENT
+              * OFF
+          example: PERMANENT
+    MinBatteryStateOfCharge:
+      type: object
+      description: Enables immediate charging regardless on charging profile, if battery is below
+        specified level.
+      properties:
+        enabled:
+          type: boolean
+          description: True if this feature is enabled.
+          example: true
+        minimumBatteryStateOfChargeInPercent:
+          type: integer
+          format: int32
+          description: If battery drop below this value, then start immediate charging.
+          example: 50
+    ChargingTime:
+      type: object
+      description: Preferred charging time when charging should be performed.
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Identifier of this charging time.
+          example: 123
+        enabled:
+          type: boolean
+          description: Indicates if this preferred charging time is enabled.
+          example: true
+        startTime:
+          type: string
+          description: Specifies when the preferred charging time should start. Local time in
+            vehicle in ISO 8601 format (HH:mm).
+          example: '12:34'
+        endTime:
+          type: string
+          description: Specifies when the preferred charging time should stop. Local time in
+            vehicle in ISO 8601 format (HH:mm).
+          example: '12:34'
+      required:
+      - id
+      - enabled
+      - startTime
+      - endTime
+    Timer:
+      type: object
+      description: Charging timer.
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Timer identifier.
+          example: 123
+        enabled:
+          type: boolean
+          description: Is timer enabled.
+          example: true
+        time:
+          type: string
+          description: Time of start this timer in ISO 8601 format (HH:mm).
+          example: '12:34'
+        type:
+          type: string
+          description: |
+            Type of timer. Possible values are:
+              * ONE_OFF - one time timer
+              * RECURRING - timer repeating on days you choose
+          example: RECURRING
+        oneOffDay:
+          type: string
+          format: dayOfWeek
+          description: Day in week when ONE_OFF timer is required. ONE_OFF timer only.
+          example: MONDAY
+        recurringOn:
+          type: array
+          items:
+            type: string
+            format: dayOfWeek
+            description: Days of weeks when RECURRING is required. RECURRING timer only.
+            example: MONDAY
+      required:
+      - id
+      - enabled
+      - type
+    ParkingPosition:
+      type: object
+      description: |
+        Last known parking position of the vehicle. When explicitly requested (via `include`) for
+        a vehicle that does not support it, `parkingPosition` is omitted and `errors` contains
+        `PARKING_POSITION_UNSUPPORTED`. Likewise, a supported but currently disabled parking
+        position is reported via `PARKING_POSITION_DISABLED`. When there is no last known parking
+        position - typically because the vehicle is in motion - the response carries only `state`
+        `IN_MOTION`, without coordinates or address. When the position cannot be retrieved,
+        `parkingPosition` is omitted and `errors` contains `PARKING_POSITION_UNAVAILABLE`.
+      properties:
+        state:
+          type: string
+          description: 'State of the vehicle from parking position point of view. Possible values are:
+            [IN_MOTION, PARKED]'
+          example: PARKED
+        gpsCoordinates:
+          type: object
+          description: GPS coordinates of the vehicle parking position. Only present when `state`
+            is `PARKED`.
+          properties:
+            latitude:
+              type: number
+              format: double
+              description: Latitude coordinate.
+              example: 37.4224428
+            longitude:
+              type: number
+              format: double
+              description: Longitude coordinate.
+              example: -122.0842467
+          required:
+          - latitude
+          - longitude
+        formattedAddress:
+          type: string
+          description: 'Formatted address of the vehicle parking position: Street, House Number, Zip
+            Code, City, Country. Only present when `state` is `PARKED`, and omitted when the address
+            could not be resolved.'
+          example: Prazska 4A, 10200 Prague, Czech Republic
+      required:
+      - state
+    CarCapturedTimestamp:
+      type: string
+      format: date-time
+      description: Timestamp when the data was last captured and sent by the vehicle. Standard ISO 8601 format.
+      example: '2021-06-01T12:00:00Z'
+    VehicleOperation:
+      type: object
+      description: A remote operation the vehicle supports. Additional fields (e.g. the current
+        availability state of the operation) may be added in the future.
+      properties:
+        name:
+          type: string
+          description: |
+            Identifies the operation; matches the `operationId` of the corresponding endpoint of
+            this API. Additional values may be added over time. Possible values are:
+              * startCharging
+              * stopCharging
+              * setChargingLimit
+              * setChargeMode
+              * updateChargingProfile
+              * startAirConditioning
+              * stopAirConditioning
+              * startAuxiliaryHeating
+              * stopAuxiliaryHeating
+              * startActiveVentilation
+              * stopActiveVentilation
+          example: startCharging
+      required:
+      - name
+    VehicleError:
+      type: object
+      description: |
+        Describes a part of the vehicle data that could not be retrieved, is not supported, or is
+        currently disabled. `*_UNSUPPORTED` errors are only reported for parts explicitly requested
+        via the `include` parameter; when `include` is omitted, unsupported parts are simply absent
+        without an error.
+      properties:
+        type:
+          type: string
+          description: |
+            Machine-readable error type identifying the part of the response that is affected.
+            Possible values are:
+              * RENDER_UNAVAILABLE - the vehicle render image URL could not be retrieved; name and licensePlate are unaffected
+              * VEHICLE_STATUS_UNSUPPORTED - vehicle status (doors, windows, lights, ...) is not supported
+              * VEHICLE_STATUS_DISABLED - vehicle status (doors, windows, lights, ...) is supported, but currently disabled
+              * VEHICLE_STATUS_UNAVAILABLE - vehicle status (doors, windows, lights, ...) could not be retrieved
+              * FUEL_STATUS_UNSUPPORTED - fuel status is not supported (for example a battery-electric vehicle)
+              * FUEL_STATUS_DISABLED - fuel status is supported, but currently disabled
+              * FUEL_STATUS_UNAVAILABLE - fuel status could not be retrieved
+              * ODOMETER_UNSUPPORTED - odometer reading is not supported
+              * ODOMETER_DISABLED - odometer reading is supported, but currently disabled
+              * ODOMETER_UNAVAILABLE - odometer reading could not be retrieved
+              * PARKING_POSITION_UNSUPPORTED - parking position is not supported
+              * PARKING_POSITION_DISABLED - parking position is supported, but currently disabled
+              * PARKING_POSITION_UNAVAILABLE - parking position could not be retrieved
+              * AIR_CONDITIONING_UNSUPPORTED - air conditioning information is not supported
+              * AIR_CONDITIONING_DISABLED - air conditioning information is supported, but currently disabled
+              * AIR_CONDITIONING_UNAVAILABLE - air conditioning information could not be retrieved
+              * AUXILIARY_HEATING_UNSUPPORTED - auxiliary heating information is not supported
+              * AUXILIARY_HEATING_DISABLED - auxiliary heating information is supported, but currently disabled
+              * AUXILIARY_HEATING_UNAVAILABLE - auxiliary heating information could not be retrieved
+              * ACTIVE_VENTILATION_UNSUPPORTED - active ventilation information is not supported
+              * ACTIVE_VENTILATION_DISABLED - active ventilation information is supported, but currently disabled
+              * ACTIVE_VENTILATION_UNAVAILABLE - active ventilation information could not be retrieved
+              * CHARGING_UNSUPPORTED - charging status is not supported
+              * CHARGING_DISABLED - charging status is supported, but currently disabled
+              * CHARGING_UNAVAILABLE - charging status could not be retrieved
+              * CHARGING_PROFILES_UNSUPPORTED - charging profiles are not supported
+              * CHARGING_PROFILES_DISABLED - charging profiles are supported, but currently disabled
+              * CHARGING_PROFILES_UNAVAILABLE - charging profiles could not be retrieved
+              * OPERATIONS_UNAVAILABLE - the supported operations could not be determined
+          example: CHARGING_UNAVAILABLE
+        description:
+          type: string
+          description: Detail information about what and why happened.
+          example: Charging status could not be retrieved from the vehicle.
+      required:
+      - type
+    ProblemDetail:
+      type: object
+      description: Problem detail object as standardized by RFC 9457 (Problem Details for HTTP APIs).
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: |
+            URI reference identifying the problem type. Generic problems that carry no semantics
+            beyond their HTTP status code use `about:blank`. More specific problem types are:
+              * https://public.api.connect.skoda-auto.cz/problems/api-key-expired - the API key used to authenticate has expired and must be rotated.
+              * https://public.api.connect.skoda-auto.cz/problems/api-key-not-authorized - the API key is not authorized to execute the operation.
+              * https://public.api.connect.skoda-auto.cz/problems/operation-not-authorized - the vehicle refused the operation for the user the API key belongs to.
+              * https://public.api.connect.skoda-auto.cz/problems/operation-not-supported - the vehicle lacks the capability the operation needs.
+              * https://public.api.connect.skoda-auto.cz/problems/operation-disabled - the capability the operation needs is currently disabled for the vehicle.
+              * https://public.api.connect.skoda-auto.cz/problems/rate-limit-exceeded - the rate limit for the API key has been exceeded.
+              * https://public.api.connect.skoda-auto.cz/problems/vehicle-not-accepting-requests - the vehicle declined the operation and it can be retried later.
+          default: about:blank
+          example: https://public.api.connect.skoda-auto.cz/problems/api-key-expired
+        title:
+          type: string
+          description: Short, human-readable summary of the problem type.
+          example: Unauthorized
+        status:
+          type: integer
+          format: int32
+          description: HTTP status code of this occurrence of the problem.
+          example: 401
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence of the problem.
+          example: The API key expired on 2026-09-01T00:00:00Z.
+        instance:
+          type: string
+          format: uri-reference
+          description: URI reference identifying this specific occurrence of the problem.
+          example: /api/v1/vehicles/TMBJB9NY5RF999999
+  parameters:
+    VinPathParameter:
+      name: vin
+      in: path
+      description: Unique VIN of the vehicle.
+      required: true
+      schema:
+        type: string
+        maxLength: 17
+        minLength: 17
+        example: TMBJB9NY5RF999999
+    ChargingProfileIdPathParameter:
+      name: id
+      in: path
+      description: Identifier of the charging profile.
+      required: true
+      schema:
+        type: integer
+        format: int64
+        example: 123456
+  responses:
+    400BadRequest:
+      description: Bad request (e.g. an unknown `include` value or a malformed request body).
+        When a request parameter is rejected, the problem carries the extension members
+        `parameter`, `rejectedValue` and `allowedValues` identifying what to fix.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Bad Request
+            status: 400
+            detail: "Invalid value 'nonsense' for parameter 'include'. Allowed values: info,
+              status, fuelStatus, odometer, parkingPosition, airConditioning, auxiliaryHeating,
+              activeVentilation, charging, chargingProfiles."
+            instance: /api/v1/vehicles/TMBJB9NY5RF999999?include=nonsense
+            parameter: include
+            rejectedValue: nonsense
+            allowedValues:
+            - info
+            - status
+            - fuelStatus
+            - odometer
+            - parkingPosition
+            - airConditioning
+            - auxiliaryHeating
+            - activeVentilation
+            - charging
+            - chargingProfiles
+    401Unauthorized:
+      description: Unauthorized. If the API key has expired the problem type is
+        https://public.api.connect.skoda-auto.cz/problems/api-key-expired.
+      headers:
+        X-API-Key-Expires-At:
+          $ref: '#/components/headers/ApiKeyExpiresAt'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://public.api.connect.skoda-auto.cz/problems/api-key-expired
+            title: Unauthorized
+            status: 401
+            detail: The API key expired on 2026-09-01T00:00:00Z.
+    403Forbidden:
+      description: Forbidden. The API key is not allowed to execute the operation; the problem type
+        is https://public.api.connect.skoda-auto.cz/problems/api-key-not-authorized.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://public.api.connect.skoda-auto.cz/problems/api-key-not-authorized
+            title: Forbidden
+            status: 403
+            detail: The API key is not authorized to access vehicle TMBJB9NY5RF999999.
+    403OperationForbidden:
+      description: |
+        Forbidden. The `type` member tells the two causes apart:
+          * https://public.api.connect.skoda-auto.cz/problems/api-key-not-authorized - the API key does not cover the vehicle in the request path.
+          * https://public.api.connect.skoda-auto.cz/problems/operation-not-authorized - the key covers the vehicle, but the vehicle refused the operation for the user it belongs to. A user lacking the rights for an operation is normally answered with `422` before the operation is sent, so this is the rare case where the rights changed, or could not be checked, in between.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://public.api.connect.skoda-auto.cz/problems/operation-not-authorized
+            title: Forbidden
+            status: 403
+            detail: Not authorized to execute the operation for vehicle TMBJB9NY5RF999999.
+            instance: /api/v1/vehicles/TMBJB9NY5RF999999/charging/start
+    404NotFound:
+      description: No vehicle found for the given VIN.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Not Found
+            status: 404
+            detail: No vehicle found for VIN TMBJB9NY5RF999999.
+    412PreconditionFailed:
+      description: The charging profile id in the URL does not match the id in the request body.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Precondition Failed
+            status: 412
+            detail: Charging profile id in the URL (123456) does not match the id in the request
+              body (654321).
+            instance: /api/v1/vehicles/TMBJB9NY5RF999999/charging-profiles/123456
+    422OperationNotPossible:
+      description: |
+        The vehicle cannot execute the operation. The problem type is
+        https://public.api.connect.skoda-auto.cz/problems/operation-not-supported when the vehicle
+        lacks the capability the operation needs (e.g. a vehicle without a high-voltage battery
+        cannot charge), or https://public.api.connect.skoda-auto.cz/problems/operation-disabled
+        when it has the capability but the capability is currently disabled (e.g. revoked consent,
+        expired license, workshop mode). Retrying does not help in either case.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://public.api.connect.skoda-auto.cz/problems/operation-not-supported
+            title: Unprocessable Content
+            status: 422
+            detail: Vehicle TMBJB9NY5RF999999 does not support charging.
+            instance: /api/v1/vehicles/TMBJB9NY5RF999999/charging/start
+    429TooManyRequests:
+      description: |
+        Too many requests; retry after the period indicated by the `Retry-After` header. The `type`
+        member tells the two possible causes apart:
+          * https://public.api.connect.skoda-auto.cz/problems/rate-limit-exceeded - the rate limit for the API key has been exceeded.
+          * https://public.api.connect.skoda-auto.cz/problems/vehicle-not-accepting-requests - the vehicle itself declined the operation, for example to limit how often it executes requests or because its battery level is too low.
+
+        The `RateLimit-*` headers describe the quota on every response, so they do not tell the two
+        apart - the request that uses up the last of the quota can be the one the vehicle declines.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimitRemaining'
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimitLimit'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimitReset'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://public.api.connect.skoda-auto.cz/problems/rate-limit-exceeded
+            title: Too Many Requests
+            status: 429
+            detail: Rate limit exceeded. Retry after 30 seconds.
+    500InternalServerError:
+      description: Unexpected internal application error.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Internal Server Error
+            status: 500
+            detail: An unexpected error occurred while processing the request.
+    503ServiceUnavailable:
+      description: Service temporarily unavailable (e.g. the API key could not be validated).
+        Retry after the period indicated by the `Retry-After` header.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Service Unavailable
+            status: 503
+            detail: API key validation is temporarily unavailable. Retry after 10 seconds.
+    504GatewayTimeout:
+      description: Operation timeout.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Gateway Timeout
+            status: 504
+            detail: The vehicle did not respond in time.
+  headers:
+    ApiKeyExpiresAt:
+      description: Expiration timestamp of the API key used to authenticate this request, in RFC
+        3339 / ISO 8601 format. Clients should rotate the key before this time to avoid interruption
+        of service.
+      schema:
+        type: string
+        format: date-time
+        example: '2026-09-01T00:00:00Z'
+    RateLimitLimit:
+      description: The maximum number of requests allowed within the current rate-limit window.
+        Standardised RateLimit-Limit field (IETF 'RateLimit header fields for HTTP').
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        example: 100
+    RateLimitRemaining:
+      description: The number of requests still available in the current rate-limit window.
+        Standardised RateLimit-Remaining field (IETF 'RateLimit header fields for HTTP').
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        example: 49
+    RateLimitReset:
+      description: The number of seconds until the current rate-limit window resets and the quota is
+        replenished. Standardised RateLimit-Reset field (IETF 'RateLimit header fields for HTTP').
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        example: 30
+    RetryAfter:
+      description: The number of seconds the client should wait before making a new request, as
+        defined by RFC 9110 (HTTP Semantics).
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        example: 30
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      name: X-API-Key
+      in: header
+      description: API key created and managed in the MyŠkoda app (https://go.skoda.eu/api-keys).
+        Keys are bound to the vehicles selected when creating them, and they expire - every
+        successful response carries the key's expiry time in the `X-API-Key-Expires-At` header.

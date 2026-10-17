@@ -146,7 +146,7 @@ class PublicApiSession(requests.Session):
         PUT a setting change to the public API (e.g. updating the charging target state of charge).
 
         Args:
-            path (str): Path relative to BASE_URL, e.g. '/api/v1/vehicles/{vin}/charging/settings'.
+            path (str): Path relative to BASE_URL, e.g. '/api/v1/vehicles/{vin}/charging/limit'.
             json_body (dict, optional): JSON body for the request.
 
         Raises:

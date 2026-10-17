@@ -1042,7 +1042,7 @@ class Connector(BaseConnector):
         precision = DEFAULT_TARGET_LEVEL_PRECISION
         if target_level_attribute.precision is not None:
             precision = target_level_attribute.precision
-        body = {'targetSOCInPercent': int(round(target_level / precision) * precision)}
+        body = {'targetStateOfChargeInPercent': int(round(target_level / precision) * precision)}
         self._run_action('put', f'/api/v1/vehicles/{vin}/charging/limit', json_body=body)
         return target_level
 

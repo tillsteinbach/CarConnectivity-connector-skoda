@@ -998,7 +998,7 @@ class Connector(BaseConnector):
         except Exception as err:
             LOG.error('%s %s failed: %s', method.upper(), path, err)
             raise
-        LOG.info('%s %s succeeded', method.upper(), path)
+        LOG.debug('%s %s succeeded', method.upper(), path)
         return result
 
     def __on_air_conditioning_target_temperature_change(self, temperature_attribute: TemperatureAttribute, target_temperature: float) -> float:

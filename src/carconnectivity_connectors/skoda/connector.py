@@ -989,6 +989,18 @@ class Connector(BaseConnector):
 
     # ------------------------------------------------------------------ commands
 
+    def _run_action(self, method: str, path: str, **kwargs: Any) -> Any:
+        """Run a command/setting request against the API, logging the attempt and any failure."""
+        LOG.debug('Trying %s %s%s', method.upper(), path, f' with body {kwargs["json_body"]}' if kwargs.get('json_body') is not None else '')
+        func = self.session.post_action if method == 'post' else self.session.put_action
+        try:
+            result = func(path, **kwargs)
+        except Exception as err:
+            LOG.error('%s %s failed: %s', method.upper(), path, err)
+            raise
+        LOG.debug('%s %s succeeded', method.upper(), path)
+        return result
+
     def __on_air_conditioning_target_temperature_change(self, temperature_attribute: TemperatureAttribute, target_temperature: float) -> float:
         if temperature_attribute.parent is None or temperature_attribute.parent.parent is None \
                 or temperature_attribute.parent.parent.parent is None or not isinstance(temperature_attribute.parent.parent.parent, SkodaVehicle):
@@ -1013,10 +1025,10 @@ class Connector(BaseConnector):
                                                                                       Climatization.ClimatizationState.OFF,
                                                                                       Climatization.ClimatizationState.UNKNOWN):
             try:
-                self.session.post_action(f'/api/v1/vehicles/{vin}/air-conditioning/stop')
+                self._run_action('post', f'/api/v1/vehicles/{vin}/air-conditioning/stop')
             except (RetrievalError, CommandError):
                 pass  # Ignore stop failures; proceed to start with new temperature
-        self.session.post_action(f'/api/v1/vehicles/{vin}/air-conditioning/start', json_body=body)
+        self._run_action('post', f'/api/v1/vehicles/{vin}/air-conditioning/start', json_body=body)
         return target_temperature
 
     def __on_charging_target_level_change(self, target_level_attribute: LevelAttribute, target_level: float) -> float:
@@ -1031,7 +1043,7 @@ class Connector(BaseConnector):
         if target_level_attribute.precision is not None:
             precision = target_level_attribute.precision
         body = {'targetStateOfChargeInPercent': int(round(target_level / precision) * precision)}
-        self.session.put_action(f'/api/v1/vehicles/{vin}/charging/settings', json_body=body)
+        self._run_action('put', f'/api/v1/vehicles/{vin}/charging/settings', json_body=body)
         return target_level
 
     def __on_air_conditioning_start_stop(self, start_stop_command: ClimatizationStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
@@ -1074,9 +1086,9 @@ class Connector(BaseConnector):
                 body['targetTemperature'] = {'value': temp_val, 'unit': temp_unit_str}
             else:
                 body['targetTemperature'] = {'value': 22.0, 'unit': 'CELSIUS'}
-            self.session.post_action(f'/api/v1/vehicles/{vin}/air-conditioning/start', json_body=body)
+            self._run_action('post', f'/api/v1/vehicles/{vin}/air-conditioning/start', json_body=body)
         elif command_arguments['command'] == ClimatizationStartStopCommand.Command.STOP:
-            self.session.post_action(f'/api/v1/vehicles/{vin}/air-conditioning/stop')
+            self._run_action('post', f'/api/v1/vehicles/{vin}/air-conditioning/stop')
         else:
             raise CommandError(f'Unknown command {command_arguments["command"]}')
         return command_arguments
@@ -1095,9 +1107,9 @@ class Connector(BaseConnector):
         if 'command' not in command_arguments:
             raise CommandError('Command argument missing')
         if command_arguments['command'] == ChargingStartStopCommand.Command.START:
-            self.session.post_action(f'/api/v1/vehicles/{vin}/charging/start')
+            self._run_action('post', f'/api/v1/vehicles/{vin}/charging/start')
         elif command_arguments['command'] == ChargingStartStopCommand.Command.STOP:
-            self.session.post_action(f'/api/v1/vehicles/{vin}/charging/stop')
+            self._run_action('post', f'/api/v1/vehicles/{vin}/charging/stop')
         else:
             raise CommandError(f'Unknown command {command_arguments["command"]}')
         return command_arguments

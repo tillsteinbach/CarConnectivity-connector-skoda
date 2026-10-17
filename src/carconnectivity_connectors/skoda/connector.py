@@ -1042,8 +1042,8 @@ class Connector(BaseConnector):
         precision = DEFAULT_TARGET_LEVEL_PRECISION
         if target_level_attribute.precision is not None:
             precision = target_level_attribute.precision
-        body = {'targetStateOfChargeInPercent': int(round(target_level / precision) * precision)}
-        self._run_action('put', f'/api/v1/vehicles/{vin}/charging/settings', json_body=body)
+        body = {'targetSOCInPercent': int(round(target_level / precision) * precision)}
+        self._run_action('put', f'/api/v1/vehicles/{vin}/charging/limit', json_body=body)
         return target_level
 
     def __on_air_conditioning_start_stop(self, start_stop_command: ClimatizationStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \

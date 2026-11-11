@@ -930,6 +930,15 @@ class Connector(BaseConnector):
         else:
             vehicle.climatization.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
 
+        estimated_reach_str = ac_data.get('estimatedReachOfTargetTemperatureAt')
+        estimated_date_reached: Optional[datetime] = None
+        if estimated_reach_str is not None:
+            try:
+                estimated_date_reached = robust_time_parse(estimated_reach_str)
+            except ValueError:
+                LOG_API.warning('Could not parse estimatedReachOfTargetTemperatureAt %s', estimated_reach_str)
+        vehicle.climatization.estimated_date_reached._set_value(value=estimated_date_reached, measured=captured_at)  # pylint: disable=protected-access
+
         target_temp = ac_data.get('targetTemperature')
         if target_temp is not None and vehicle.climatization.settings is not None:
             temp_value = target_temp.get('value')
